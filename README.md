@@ -58,7 +58,7 @@ Add to your workspace `.vscode/mcp.json` or user `settings.json`:
 
 > For user `settings.json`, nest the above under `"mcp": { ... }`.
 
-Copy `.github/copilot-instructions.md` into your project's `.github/` folder to give Copilot guidance on using CAIT tools effectively.
+Copy [copilot-instructions.md](./instructions/copilot-instructions.md) into your project's `.github/` folder to give Copilot guidance on using CAIT tools effectively.
 
 ### Claude Desktop
 
@@ -88,7 +88,7 @@ claude mcp add cait -e PYTHONPATH=/absolute/path/to/CAIT \
   -- /absolute/path/to/.venv/bin/python -m cait.server
 ```
 
-Copy `CLAUDE.md` to your project root (or to `~/.claude/CLAUDE.md` for global use) to give Claude Code guidance on using CAIT tools effectively.
+Copy [CLAUDE.md](./instructions/CLAUDE.md) to your project root (or to `~/.claude/CLAUDE.md` for global use) to give Claude Code guidance on using CAIT tools effectively.
 
 ## Recommended MCP Servers
 
