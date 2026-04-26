@@ -1,0 +1,12 @@
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required:
+      - pythonEnvPath
+    properties:
+      pythonEnvPath:
+        type: string
+        description: Absolute path to the Python environment.
+  commandFunction: |-
+    (config) => ({ command: 'python', args: ['cait/server.py'], env: { PYTHONPATH: config.pythonEnvPath } })

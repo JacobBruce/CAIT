@@ -11,6 +11,16 @@
   },
   "homepage": "https://github.com/JacobBruce/CAIT",
   "icon": "icon.png",
+  "user_config": {
+    "python_path": {
+      "type": "directory",
+      "title": "Python Path",
+      "description": "Absolute path to the Python environment.",
+      "multiple": false,
+      "required": true,
+      "default": "${__dirname}/server/lib"
+    }
+  },
   "server": {
     "type": "python",
     "entry_point": "cait/server.py",
@@ -20,160 +30,10 @@
         "${__dirname}/cait/server.py"
       ],
       "env": {
-        "PYTHONPATH": "${__dirname}/server/lib"
+        "PYTHONPATH": "${user_config.python_path}"
       }
     }
   },
-  "tools": [
-    {
-      "name": "get_file_info",
-      "description": "Metadata for a single file: size, line count, permissions, timestamps. Does not read content."
-    },
-    {
-      "name": "get_dir_info",
-      "description": "Directory listing with per-entry metadata. Supports glob patterns and recursion."
-    },
-    {
-      "name": "append_file",
-      "description": "Append text to a file. Useful for NOTES.md, TASKS.md, log files."
-    },
-    {
-      "name": "download_file",
-      "description": "Download a URL to `~/.cait/files/` (or `CAIT_FILES_PATH`). Returns the local path."
-    },
-    {
-      "name": "fetch_url",
-      "description": "HTTP GET/POST with custom headers and body. Use `save_to` to avoid large responses in context. `convert=True` returns clean markdown via Docling or MarkItDown."
-    },
-    {
-      "name": "repl_exec",
-      "description": "Execute Python code in a persistent session. Variables, imports, and function definitions survive between calls. Returns stdout, stderr, and exception info."
-    },
-    {
-      "name": "repl_read",
-      "description": "Inspect a named variable from the REPL session without executing code. Returns repr, type, and JSON value."
-    },
-    {
-      "name": "repl_vars",
-      "description": "List all user-defined variables in the current REPL session. Returns name, type, repr, and JSON value for each. Useful for reviewing session state without running code."
-    },
-    {
-      "name": "repl_reset",
-      "description": "Clear all variables and imports from the REPL session."
-    },
-    {
-      "name": "find_definitions",
-      "description": "Find all definitions of a function, class, or variable. Returns file, line, docstring, and kind."
-    },
-    {
-      "name": "find_calls",
-      "description": "Find all call sites of a function. Matches bare calls, method calls, and chained calls."
-    },
-    {
-      "name": "find_imports",
-      "description": "Find all files that import a given module or name."
-    },
-    {
-      "name": "find_references",
-      "description": "Find all uses of an identifier (loads, stores, deletes, attribute accesses)."
-    },
-    {
-      "name": "search_text",
-      "description": "Semantically search or summarize a text string or plain text file (`.txt`, `.md`, `.rst`)."
-    },
-    {
-      "name": "encode_text",
-      "description": "Return raw 384-dimensional float embeddings for one or more strings or files."
-    },
-    {
-      "name": "text_similarity",
-      "description": "Cosine similarity between two texts (0–1)."
-    },
-    {
-      "name": "convert_doc",
-      "description": "Convert PDF, DOCX, PPTX, XLSX, HTML, LaTeX, images, audio, and more to markdown or plain text."
-    },
-    {
-      "name": "search_doc",
-      "description": "Same as `search_text` but handles many document formats (PDF, DOCX, HTML, URLs). Converts via `convert_doc` on first call and caches the result — repeat calls are instant."
-    },
-    {
-      "name": "wiki_search",
-      "description": "Search Wikipedia. Returns titles, snippets, word counts, and URLs."
-    },
-    {
-      "name": "wiki_sections",
-      "description": "List all sections of a page as a table of contents (no text)."
-    },
-    {
-      "name": "wiki_section",
-      "description": "Get the text of a specific section. Use `wiki_sections` first to find section titles."
-    },
-    {
-      "name": "wiki_page",
-      "description": "Get full page text or just the summary (`summary_only=True`). Supports non-English via `language` parameter."
-    },
-    {
-      "name": "arxiv_search",
-      "description": "Search arXiv. Supports field prefixes (`ti:`, `au:`, `abs:`, `cat:`) and boolean operators. Returns metadata for up to 100 papers."
-    },
-    {
-      "name": "arxiv_paper",
-      "description": "Fetch a paper by ID. `full_text=False` (default) returns abstract + metadata. `full_text=True` downloads and converts the full PDF. Use `save_to` for large outputs."
-    },
-    {
-      "name": "get_datetime",
-      "description": "Current date, time, timezone, UTC offset, weekday, and Unix timestamp. Accepts any IANA timezone name."
-    },
-    {
-      "name": "timer_start",
-      "description": "Start a named wall-clock timer."
-    },
-    {
-      "name": "timer_stop",
-      "description": "Stop a timer and return elapsed seconds."
-    },
-    {
-      "name": "timer_list",
-      "description": "List all running timers and their current elapsed time."
-    },
-    {
-      "name": "diff_text",
-      "description": "Unified diff between two strings or files. Returns diff text plus added/removed line counts."
-    },
-    {
-      "name": "mem_add",
-      "description": "Add a new entry. Fields: `title`, `content` (embedded), `tags`, `description`, `source`, `entry_id`."
-    },
-    {
-      "name": "mem_search",
-      "description": "Find entries by semantic similarity to a query. Optionally filter by tags."
-    },
-    {
-      "name": "mem_get",
-      "description": "Retrieve a full entry by ID."
-    },
-    {
-      "name": "mem_list",
-      "description": "List entries sorted by date (newest first). Content omitted for brevity."
-    },
-    {
-      "name": "mem_set",
-      "description": "Update fields of an existing entry. Only non-empty values are applied."
-    },
-    {
-      "name": "mem_edit",
-      "description": "Edits content in-place — regex replace when pattern is given, or append when not."
-    },
-    {
-      "name": "mem_delete",
-      "description": "Permanently delete an entry by ID."
-    },
-    {
-      "name": "mem_find",
-      "description": "Fast metadata scan — no embedding. Match by title substring, exact source URL, or tags. Use this for deduplication checks before `mem_add`."
-    }
-  ],
   "compatibility": {
     "platforms": [
       "win32",

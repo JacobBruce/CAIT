@@ -46,7 +46,7 @@ Add to your workspace `.vscode/mcp.json` or user `settings.json`:
 ```json
 {
   "servers": {
-    "cait": {
+    "bitfreak/cait": {
       "type": "stdio",
       "command": "/absolute/path/to/.venv/bin/python",
       "args": ["-m", "cait.server"],
@@ -70,7 +70,7 @@ Edit `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "cait": {
+    "bitfreak/cait": {
       "command": "/absolute/path/to/.venv/bin/python",
       "args": ["-m", "cait.server"],
       "env": {
