@@ -2,7 +2,7 @@
 
 A modular [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that extends AI assistants with practical capabilities: file I/O, a persistent Python REPL, AST-aware code analysis, semantic text search, document conversion, Wikipedia & arXiv tools, a persistent vector memory database, and other general utilities.
 
-**37 tools across 9 modules.** Each module can be disabled independently via the `CAIT_DISABLE` environment variable. Made by AI for AI.
+A total of **37 tools across 9 modules**. Each module can be disabled independently via the `CAIT_DISABLE` environment variable. Made by AI for AI.
 
 ## Requirements
 
@@ -188,7 +188,7 @@ Persistent ChromaDB vector store at `~/.cait/files/` (shared across projects). C
 | `mem_set` | Update fields of an existing entry. Only non-empty values are applied. |
 | `mem_edit` | Edits content in-place — regex replace when pattern is given, or append when not. |
 | `mem_delete` | Permanently delete an entry by ID. |
-| `mem_find` | **Fast metadata scan — no embedding.** Match by title substring, exact source URL, or tags. Use this for deduplication checks before `mem_add`. |
+| `mem_find` | Fast metadata scan — no embedding. Match by title substring, exact source URL, or tags. Use this for deduplication checks before `mem_add`. |
 
 ## Disabling Modules
 
