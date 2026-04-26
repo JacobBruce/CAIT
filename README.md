@@ -1,6 +1,6 @@
 # CAIT - Core AI Toolkit
 
-A modular [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that extends AI assistants with practical capabilities: file I/O, a persistent Python REPL, AST-aware code analysis, semantic text search, document conversion, Wikipedia, arXiv, a persistent vector memory database, and other general utilities.
+A modular [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that extends AI assistants with practical capabilities: file I/O, a persistent Python REPL, AST-aware code analysis, semantic text search, document conversion, Wikipedia & arXiv tools, a persistent vector memory database, and other general utilities.
 
 **37 tools across 9 modules.** Each module can be disabled independently via the `CAIT_DISABLE` environment variable. Made by AI for AI.
 
