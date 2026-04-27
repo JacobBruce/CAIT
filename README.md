@@ -22,13 +22,13 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install fastmcp chromadb wikipedia-api arxiv markitdown
 ```
 
-Replace `markitdown` with `docling` for more robust document conversions. Then copy [copilot-instructions.md](./instructions/copilot-instructions.md) or [CLAUDE.md](./instructions/CLAUDE.md) into the correct location (more details below).
+Replace `markitdown` with `docling` for more robust document conversions. Then copy [copilot-instructions.md](https://github.com/JacobBruce/CAIT/instructions/copilot-instructions.md) or [CLAUDE.md](https://github.com/JacobBruce/CAIT/instructions/CLAUDE.md) into the correct location (more details below).
 
 The instructions include general guidance for how to behave, how to use CAIT tools, and how to use the Firecrawl search tools. The instructions may need to be adapted to suite different setups.
 
-If you are working in a Python environment you may want to make use of this agent prompt: [python-coder.agent.md](./agents/python-coder.agent.md). There is also [research-assistant.agent.md](./agents/research-assistant.agent.md) for deep research.
+If you are working in a Python environment you may want to make use of this agent prompt: [python-coder.agent.md](https://github.com/JacobBruce/CAIT/agents/python-coder.agent.md). There is also [research-assistant.agent.md](https://github.com/JacobBruce/CAIT/agents/research-assistant.agent.md) for deep research.
 
-There is also a skill file called [project-planning.md](./skills/project-planning.md) which is helpful for planning the implementation details of a project. The agent produces a PLAN.md file and TASKS.md file.
+There is also a skill file called [project-planning.md](https://github.com/JacobBruce/CAIT/skills/project-planning.md) which is helpful for planning the implementation details of a project. The agent produces a PLAN.md file and TASKS.md file.
 
 ### Environment Variables
 
@@ -58,7 +58,7 @@ Add to your workspace `.vscode/mcp.json` or user `settings.json`:
 
 > For user `settings.json`, nest the above under `"mcp": { ... }`.
 
-Copy [copilot-instructions.md](./instructions/copilot-instructions.md) into your project's `.github/` folder to give Copilot guidance on using CAIT tools effectively.
+Copy [copilot-instructions.md](https://github.com/JacobBruce/CAIT/instructions/copilot-instructions.md) into your project's `.github/` folder to give Copilot guidance on using CAIT tools effectively.
 
 ### Claude Desktop
 
@@ -88,7 +88,7 @@ claude mcp add cait -e PYTHONPATH=/absolute/path/to/CAIT \
   -- /absolute/path/to/.venv/bin/python -m cait.server
 ```
 
-Copy [CLAUDE.md](./instructions/CLAUDE.md) to your project root (or to `~/.claude/CLAUDE.md` for global use) to give Claude Code guidance on using CAIT tools effectively.
+Copy [CLAUDE.md](https://github.com/JacobBruce/CAIT/instructions/CLAUDE.md) to your project root (or to `~/.claude/CLAUDE.md` for global use) to give Claude Code guidance on using CAIT tools effectively.
 
 ## Recommended MCP Servers
 

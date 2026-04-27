@@ -73,7 +73,7 @@ mem_search("architecture", scope="myproject")
 - `title` — short, searchable label
 - `content` — the main body; this is what gets semantically embedded and searched
 - `description` — one-line summary shown in `mem_list` results without fetching content
-- `source` — URL, file path, or `"manual"` if the agent wrote it directly
+- `source` — URL, file path, or `"manual"` if written directly
 - `tags` — use the rules above; prefer specific tags over vague ones
 - `entry_id` — omit unless you need a stable deterministic ID
 
