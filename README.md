@@ -1,3 +1,4 @@
+<!-- mcp-name: io.github.JacobBruce/CAIT -->
 # CAIT - Core AI Toolkit
 
 A modular [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that extends AI assistants with practical capabilities: file I/O, a persistent Python REPL, AST-aware code analysis, semantic text search, document conversion, Wikipedia & arXiv tools, a persistent vector memory database, and other general utilities.
