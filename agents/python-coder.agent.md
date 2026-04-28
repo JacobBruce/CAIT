@@ -19,7 +19,7 @@ After reading, update `TASKS.md` to reflect what you are about to do before writ
 2. **Prefer performant code**: Consider the performance implications of different approaches
 3. **Iterate in small steps**: Implement one feature at a time; test before proceeding
 4. **Look for edge cases**: Consider possible edge cases and other points of failure
-5. **Validate correctness**: Verify changes; run tests add sanity checks
+5. **Validate correctness**: Verify changes; run tests and sanity checks
 6. **Document findings**: Keep `NOTES.md` and `TASKS.md` updated with insights and progress
 
 ## Code Conventions
