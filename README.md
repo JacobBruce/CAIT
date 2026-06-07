@@ -3,14 +3,14 @@
 
 A modular [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that extends AI assistants with practical capabilities: file I/O, a persistent Python REPL, AST-aware code analysis, semantic text search, document conversion, Wikipedia & arXiv tools, a persistent vector memory database, and other general utilities.
 
-A total of **37 tools across 9 modules**. Each module can be disabled independently via the `CAIT_DISABLE` environment variable. Made by AI for AI.
+A total of **38 tools across 9 modules**. Each module can be disabled independently via the `CAIT_DISABLE` environment variable. Made by AI for AI.
 
 ## Requirements
 
 - Python 3.11+
 - Core: `fastmcp`, `chromadb`
 - Online research: `wikipedia-api`, `arxiv`
-- Document conversion: `docling` or `markitdown`
+- Document conversion: `docling` or `markitdown[all]` (or `markitdown[pdf]` for PDF-only)
 - Scientific computing (optional, for REPL use): `sympy`, `scipy`, `matplotlib`, `plotly`, `vispy`
 
 ## Installation
@@ -20,22 +20,47 @@ git clone https://github.com/JacobBruce/CAIT
 cd CAIT
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install fastmcp chromadb wikipedia-api arxiv markitdown
+pip install -r requirements.txt
 ```
 
-Replace `markitdown` with `docling` for more robust document conversions. Then copy [copilot-instructions.md](https://github.com/JacobBruce/CAIT/instructions/copilot-instructions.md) or [CLAUDE.md](https://github.com/JacobBruce/CAIT/instructions/CLAUDE.md) into the correct location (more details below).
+Replace MarkItDown with Docling in `requirements.txt` if you want higher-quality layout-aware conversion (slower, heavier).
 
-The instructions include general guidance for how to behave, how to use CAIT tools, and how to use the Firecrawl search tools. The instructions may need to be adapted to suite different setups.
+## Agents & Skills
 
-If you are working in a Python environment you may want to make use of this agent prompt: [python-coder.agent.md](https://github.com/JacobBruce/CAIT/agents/python-coder.agent.md). There is also [research-assistant.agent.md](https://github.com/JacobBruce/CAIT/agents/research-assistant.agent.md) for deep research.
+CAIT includes several agent files, instructions/rules, and skills. To get the most from CAIT you should install [AGENTS.md](instructions/AGENTS.md) into your work environment (see **Agent Instructions** below).
 
-There is also a skill file called [project-planning.md](https://github.com/JacobBruce/CAIT/skills/project-planning.md) which is helpful for planning the implementation details of a project. The agent produces a PLAN.md file and TASKS.md file.
+The instructions include general guidance for how to behave, how to use CAIT tools, and how to use the Firecrawl search tools. The instructions may need to be adapted to suit different setups.
+
+If you are working in a Python environment you may want to make use of this agent prompt: [python-coder.agent.md](agents/python-coder.agent.md). There is also [research-assistant.agent.md](agents/research-assistant.agent.md) for deep research.
+
+For C++ programmers there is [cpp-style-guidelines.md](instructions/cpp-style-guidelines.md), although many of the guidelines are my personal preferences and may need to be adapted to other projects.
+
+For project planning and onboarding, CAIT also includes these two complementary skills:
+
+- [project-survey.md](skills/project-survey.md) — orient in an unfamiliar codebase; produces `SURVEY.md`
+- [project-planning.md](skills/project-planning.md) — plan new features or roadmaps; produces `PLAN.md` and `TASKS.md`
+
+**New:** CAIT now includes [game-master.agent.md](agents/game-master.agent.md) to help agents act as the Game Master of a roleplaying text-based adventure, with optional image generation support.
+
+It contains detailed "Game Master Protocols" with a well thought out Markdown file system for maintaining the state of a roleplay world. There is also an accompanying [skill](skills/new-roleplay-world/) to help the agent setup a new roleplay world.
+
+### Agent Instructions
+
+To use the agent instructions, rename [AGENTS.md](instructions/AGENTS.md) and place it in the correct location:
+
+| Tool | Where to put a copy |
+|------|---------------------|
+| **Cursor** | User rule, or `AGENTS.md` at project root |
+| **Claude Code** | `CLAUDE.md` at project root (or `~/.claude/CLAUDE.md` globally) |
+| **GitHub Copilot** | `.github/copilot-instructions.md` |
+| **Other** | `AGENTS.md` at project root — increasingly recognized across tools |
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CAIT_FILES_PATH` | `~/.cait/files/` | Directory for downloaded files and document cache |
+| `CAIT_FILES_PATH` | `~/.cait/files/` | Directory for downloaded files and document conversion cache |
+| `CAIT_MEMORY_PATH` | `~/.cait/memory` | ChromaDB storage for the persistent memory database |
 | `CAIT_DISABLE` | _(empty)_ | Comma-separated module names to exclude at startup (e.g. `wiki,arxiv`) |
 
 ## Client Configuration
@@ -59,7 +84,7 @@ Add to your workspace `.vscode/mcp.json` or user `settings.json`:
 
 > For user `settings.json`, nest the above under `"mcp": { ... }`.
 
-Copy [copilot-instructions.md](https://github.com/JacobBruce/CAIT/instructions/copilot-instructions.md) into your project's `.github/` folder to give Copilot guidance on using CAIT tools effectively.
+Copy [AGENTS.md](instructions/AGENTS.md) to `.github/copilot-instructions.md` in your project.
 
 ### Claude Desktop
 
@@ -89,7 +114,30 @@ claude mcp add cait -e PYTHONPATH=/absolute/path/to/CAIT \
   -- /absolute/path/to/.venv/bin/python -m cait.server
 ```
 
-Copy [CLAUDE.md](https://github.com/JacobBruce/CAIT/instructions/CLAUDE.md) to your project root (or to `~/.claude/CLAUDE.md` for global use) to give Claude Code guidance on using CAIT tools effectively.
+Copy [AGENTS.md](instructions/AGENTS.md) to your project root as `CLAUDE.md` (or `~/.claude/CLAUDE.md` for global use).
+
+### Cursor
+
+Add to your user `~/.cursor/mcp.json` (or project `.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "cait": {
+      "command": "/absolute/path/to/CAIT/.venv/bin/python",
+      "args": ["-m", "cait.server"],
+      "cwd": "/absolute/path/to/CAIT",
+      "env": {
+        "PYTHONPATH": "/absolute/path/to/CAIT"
+      }
+    }
+  }
+}
+```
+
+**`PYTHONPATH` must point at the CAIT repo root** (the directory that contains the `cait/` package). Cursor does not always honor `cwd` for MCP subprocesses, so `PYTHONPATH` is required for `python -m cait.server` to resolve.
+
+Add [AGENTS.md](instructions/AGENTS.md) as a user or project rule (Settings → Rules, Skills, Subagents), or copy it to `AGENTS.md` in the project root.
 
 ## Recommended MCP Servers
 
@@ -101,6 +149,10 @@ Copy [CLAUDE.md](https://github.com/JacobBruce/CAIT/instructions/CLAUDE.md) to y
 
 [Serena](https://github.com/oraios/serena) provides many tools for semantic code retrieval and editing. Both CAIT and Serena include a similar memory system so it is recommended to disable one of them.
 
+### codebase-memory-mcp
+
+[codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) indexes a repository into a persistent **knowledge graph** (functions, classes, call chains, HTTP routes, packages) and exposes structural queries over MCP.
+
 ## Tool Reference
 
 ### File System — `fs`
@@ -109,11 +161,14 @@ Copy [CLAUDE.md](https://github.com/JacobBruce/CAIT/instructions/CLAUDE.md) to y
 |------|-------------|
 | `get_file_info` | Metadata for a single file: size, line count, permissions, timestamps. Does not read content. |
 | `get_dir_info` | Directory listing with per-entry metadata. Supports glob patterns and recursion. |
-| `append_file` | Append text to a file. Useful for NOTES.md, TASKS.md, log files. |
+| `read_file` | Read a text file with a `max_bytes` cap and `lineno\|text` prefixes. Slice mode: `offset` + `limit` (negative `limit` = tail, e.g. `-50`). Search mode: `pattern` with `context` lines around hits (in-file grep). |
+| `write_file` | Write text to a file. `mode='append'` (default) or `'replace'`. Useful for NOTES.md, TASKS.md, log files. |
 | `download_file` | Download a URL to `~/.cait/files/` (or `CAIT_FILES_PATH`). Returns the local path. |
 | `fetch_url` | HTTP GET/POST with custom headers and body. Use `save_to` to avoid large responses in context. `convert=True` returns clean markdown via Docling or MarkItDown. |
 
 ### Persistent Python REPL — `repl`
+
+> **Security:** `repl_exec` runs arbitrary Python as the same OS user as the MCP server, with full filesystem and network access. Only enable the REPL module in environments you trust.
 
 | Tool | Description |
 |------|-------------|
@@ -142,6 +197,7 @@ Uses `all-MiniLM-L6-v2` (bundled with ChromaDB — no separate download). Chunk 
 | `search_text` | Semantically search or summarize a text string or plain text file (`.txt`, `.md`, `.rst`). Query given → extract mode (most relevant chunks). Query empty → summarize mode (most representative chunks). |
 | `encode_text` | Return raw 384-dimensional float embeddings for one or more strings or files. |
 | `text_similarity` | Cosine similarity between two texts (0–1). |
+| `diff_text` | Unified diff between two strings or files. Returns diff text plus added/removed line counts. |
 
 ### Document Tools — `document`
 
@@ -174,11 +230,10 @@ Uses `all-MiniLM-L6-v2` (bundled with ChromaDB — no separate download). Chunk 
 | `timer_start` | Start a named wall-clock timer. |
 | `timer_stop` | Stop a timer and return elapsed seconds. |
 | `timer_list` | List all running timers and their current elapsed time. |
-| `diff_text` | Unified diff between two strings or files. Returns diff text plus added/removed line counts. |
 
 ### Memory Database — `memory`
 
-Persistent ChromaDB vector store at `~/.cait/files/` (shared across projects). Content is embedded with `all-MiniLM-L6-v2` for semantic retrieval.
+Persistent ChromaDB vector store at `~/.cait/memory` (override with `CAIT_MEMORY_PATH`; shared across projects). Content is embedded with `all-MiniLM-L6-v2` for semantic retrieval.
 
 | Tool | Description |
 |------|-------------|

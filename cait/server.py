@@ -13,7 +13,7 @@ import os
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from cait.fs import _DEFAULT_EXCLUDE, dir_info, file_info, file_append, file_download, fetch_url as _fetch_url
+from cait.fs import _DEFAULT_EXCLUDE, dir_info, file_info, file_read, file_write, file_download, fetch_url as _fetch_url
 import cait.repl as _repl
 import cait.code as _code
 import cait.utils as _utils
@@ -23,14 +23,22 @@ import cait.arxiv as _arxiv
 import cait.memory as _mem
 import cait.document as _document
 
+
+def _exclude_set(exclude: list[str] | None) -> set[str]:
+	if exclude is None:
+		return set(_DEFAULT_EXCLUDE)
+	return set(exclude)
+
+
 mcp = FastMCP(
 	name="CAIT",
 	instructions=(
-		"Core AI Toolkit — 37 tools across 9 modules for file I/O, Python REPL, code analysis, "
+		"Core AI Toolkit — 38 tools across 9 modules for file I/O, Python REPL, code analysis, "
 		"semantic search, document tools, Wikipedia, arXiv, utilities, and persistent memory.\n\n"
 
 		"FILE SYSTEM (fs): get_file_info / get_dir_info for metadata without reading content; "
-		"append_file to add text to a file; download_file to fetch a URL to local storage; "
+		"read_file for bounded line reads or in-file regex search with context; "
+		"write_file to append or replace file text; download_file to fetch a URL to local storage; "
 		"fetch_url for HTTP GET/POST with optional save_to and convert=True for markdown conversion.\n\n"
 
 		"PYTHON REPL (repl): repl_exec runs code in a persistent session (variables survive between calls); "
@@ -42,7 +50,7 @@ mcp = FastMCP(
 
 		"TEXT SEARCH (text): search_text semantically searches or summarizes a plain-text string or file "
 		"(query given → extract mode; query empty → summarize mode); encode_text returns raw 384-d embeddings; "
-        "text_similarity returns a cosine score (0–1).\n\n"
+		"text_similarity returns a cosine score (0–1); diff_text returns a unified diff of two strings or files.\n\n"
 
 		"DOCUMENT TOOLS (document): convert_doc converts PDF, DOCX, PPTX, HTML, and more to "
 		"markdown/text via Docling or MarkItDown — use save_to to write output to a file; "
@@ -56,7 +64,7 @@ mcp = FastMCP(
 		"full_text=True downloads and converts the PDF; use save_to for large outputs.\n\n"
 
 		"UTILITIES (utils): get_datetime with optional IANA timezone; timer_start / timer_stop / "
-		"timer_list for wall-clock timing; diff_text returns a unified diff of two strings or files.\n\n"
+		"timer_list for wall-clock timing.\n\n"
 
 		"MEMORY (memory): Persistent ChromaDB vector database. mem_add stores an entry (content is "
 		"embedded for semantic search); mem_search retrieves by similarity; mem_get fetches by ID; "
@@ -80,32 +88,71 @@ def get_file_info(
 
 
 @mcp.tool(tags={"fs"}, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+def read_file(
+	path:         Annotated[str,  "Absolute or relative path to the file"],
+	offset:       Annotated[int,  "First line to read, 1-based (default 1)"] = 1,
+	limit:        Annotated[int | None, "Line cap. Positive: max lines from offset. Negative: last abs(limit) lines (offset ignored), e.g. -50 for a log tail. None = no line cap"] = None,
+	max_bytes:    Annotated[int,  "Hard cap on returned content size in bytes (default 256000)"] = 256_000,
+	pattern:      Annotated[str,  "Regex to search for. When set, returns matching lines plus context (grep mode) instead of a plain slice"] = "",
+	context:      Annotated[int,  "Search mode only: lines before/after each pattern match in content, like grep -C (default 2). Ignored when pattern is empty"] = 2,
+	ignore_case:  Annotated[bool, "Case-insensitive regex when pattern is set (default False)"] = False,
+	max_matches:  Annotated[int,  "Stop after this many matching lines when pattern is set (default 100)"] = 100,
+) -> dict:
+	"""Read a text file with a strict size budget and optional in-file regex search.
+
+	Unlike generic editor read tools, read_file enforces max_bytes, prefixes every
+	line with its line number (``lineno|text``), and supports grep-style search via
+	*pattern* with merged context windows — useful for large logs and generated files.
+
+	Slice mode (no pattern): lines[offset : offset+limit], capped by max_bytes.
+	Negative limit reads the file tail (e.g. limit=-100 after append-heavy logs).
+	Search mode (pattern set): merged context around each regex hit; context controls
+	grep -C window size. Optional offset/limit scopes the search window.
+
+	Returns path, mode ('slice' or 'search'), total_lines, content, and truncated flag.
+	Search mode also returns match_count and a matches list [{line, text}, ...]."""
+	return file_read(
+		path,
+		offset=offset,
+		limit=limit,
+		max_bytes=max_bytes,
+		pattern=pattern or None,
+		context=context,
+		ignore_case=ignore_case,
+		max_matches=max_matches,
+	)
+
+
+@mcp.tool(tags={"fs"}, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 def get_dir_info(
 	path: Annotated[str, "Absolute or relative path to the directory"],
 	pattern: Annotated[str, "Glob pattern to filter entries (default '*' = all)"] = "*",
 	recursive: Annotated[bool, "If True, search all subdirectories"] = False,
 	exclude: Annotated[
-		list[str],
+		list[str] | None,
 		"Directory names to skip entirely. Defaults to [\".git\", \".venv\", \"__pycache__\", \".mypy_cache\", \".pytest_cache\", \"node_modules\"]."
-	] = list(_DEFAULT_EXCLUDE),
+	] = None,
 ) -> dict:
 	"""List directory contents with metadata for each entry.
 	Returns size, line count, permissions, and timestamps per file.
 	Does not read file content."""
-	return dir_info(path, pattern=pattern, recursive=recursive, exclude=set(exclude))
+	return dir_info(path, pattern=pattern, recursive=recursive, exclude=_exclude_set(exclude))
 
 
 @mcp.tool(tags={"fs"}, annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=False))
-def append_file(
-	path:    Annotated[str,  "Absolute or relative path to the file to append to"],
-	text:    Annotated[str,  "Text to append"],
-	newline: Annotated[bool, "Ensure the appended text ends with a newline (default True)"] = True,
+def write_file(
+	path:    Annotated[str,  "Absolute or relative path to the file"],
+	text:    Annotated[str,  "Text to write"],
+	mode:    Annotated[str,  "'append' (default) adds to an existing file; 'replace' overwrites or creates the file"] = "append",
+	newline: Annotated[bool, "Ensure the written text ends with a newline (default True)"] = True,
 ) -> dict:
-	"""Append text to an existing file.
+	"""Write text to a file.
 
-	Useful for adding entries to NOTES.md, TASKS.md, log files, etc.
-	Returns the path, number of characters appended, and the new total line count."""
-	return file_append(path, text, newline=newline)
+	Use mode='append' for NOTES.md, TASKS.md, log files, etc. (file must already exist).
+	Use mode='replace' to overwrite or create a file.
+
+	Returns the path, mode, characters written, and the new total line count."""
+	return file_write(path, text, mode=mode, newline=newline)
 
 
 @mcp.tool(tags={"fs"}, annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=True))
@@ -126,8 +173,8 @@ def download_file(
 def fetch_url(
 	url:     Annotated[str,       "URL to fetch"],
 	method:  Annotated[str,       "HTTP method: 'GET' (default) or 'POST'"] = "GET",
-	headers: Annotated[dict,      "Optional request headers (e.g. {\"Authorization\": \"Bearer ...\"})"] = {},
-	data:    Annotated[str,       "Optional body for POST requests. A dict is form-encoded; a str is sent as-is."] = "",
+	headers: Annotated[dict | None, "Optional request headers (e.g. {\"Authorization\": \"Bearer ...\"})"] = None,
+	data:    Annotated[str | dict,  "Optional POST body. A dict is form-encoded; a str is sent as-is."] = "",
 	save_to: Annotated[str,       "If given, write the response body to this file path instead of returning inline content."] = "",
 	convert: Annotated[bool,      "If True, run the saved/fetched content through convert_doc and add a 'markdown' field."] = False,
 ) -> dict:
@@ -145,8 +192,8 @@ def fetch_url(
 	return _fetch_url(
 		url,
 		method=method,
-		headers=headers or None,
-		data=data or None,
+		headers=headers,
+		data=data if data != "" else None,
 		save_to=save_to,
 		convert=convert,
 	)
@@ -209,7 +256,7 @@ def find_definitions(
 	path:      Annotated[str,       "File or directory to search. Defaults to cwd if omitted"] = "",
 	kind:      Annotated[str,       "Restrict to 'function', 'class', or 'variable'. Leave blank for all"] = "",
 	recursive: Annotated[bool,      "Descend into subdirectories (default True)"] = True,
-	exclude:   Annotated[list[str], _EXCLUDE_HINT] = list(_DEFAULT_EXCLUDE),
+	exclude:   Annotated[list[str] | None, _EXCLUDE_HINT] = None,
 ) -> dict:
 	"""Find all definitions of a symbol (function, class, or variable) in Python source files.
 
@@ -221,7 +268,7 @@ def find_definitions(
 			path=path or None,
 			kind=kind or None,
 			recursive=recursive,
-			exclude=set(exclude),
+			exclude=_exclude_set(exclude),
 		),
 	}
 
@@ -231,7 +278,7 @@ def find_calls(
 	name:      Annotated[str,       "Function name to find call sites of"],
 	path:      Annotated[str,       "File or directory to search. Defaults to cwd if omitted"] = "",
 	recursive: Annotated[bool,      "Descend into subdirectories (default True)"] = True,
-	exclude:   Annotated[list[str], _EXCLUDE_HINT] = list(_DEFAULT_EXCLUDE),
+	exclude:   Annotated[list[str] | None, _EXCLUDE_HINT] = None,
 ) -> dict:
 	"""Find all call sites of a function in Python source files.
 
@@ -243,7 +290,7 @@ def find_calls(
 			name,
 			path=path or None,
 			recursive=recursive,
-			exclude=set(exclude),
+			exclude=_exclude_set(exclude),
 		),
 	}
 
@@ -253,7 +300,7 @@ def find_imports(
 	module:    Annotated[str,       "Module name to search for (e.g. 'os', 'os.path', 'pandas')"],
 	path:      Annotated[str,       "File or directory to search. Defaults to cwd if omitted"] = "",
 	recursive: Annotated[bool,      "Descend into subdirectories (default True)"] = True,
-	exclude:   Annotated[list[str], _EXCLUDE_HINT] = list(_DEFAULT_EXCLUDE),
+	exclude:   Annotated[list[str] | None, _EXCLUDE_HINT] = None,
 ) -> dict:
 	"""Find all files that import a given module or name from it.
 
@@ -265,7 +312,7 @@ def find_imports(
 			module,
 			path=path or None,
 			recursive=recursive,
-			exclude=set(exclude),
+			exclude=_exclude_set(exclude),
 		),
 	}
 
@@ -275,7 +322,7 @@ def find_references(
 	name:      Annotated[str,       "Identifier name to find all usages of"],
 	path:      Annotated[str,       "File or directory to search. Defaults to cwd if omitted"] = "",
 	recursive: Annotated[bool,      "Descend into subdirectories (default True)"] = True,
-	exclude:   Annotated[list[str], _EXCLUDE_HINT] = list(_DEFAULT_EXCLUDE),
+	exclude:   Annotated[list[str] | None, _EXCLUDE_HINT] = None,
 ) -> dict:
 	"""Find all uses of an identifier in Python source files.
 
@@ -287,7 +334,7 @@ def find_references(
 			name,
 			path=path or None,
 			recursive=recursive,
-			exclude=set(exclude),
+			exclude=_exclude_set(exclude),
 		),
 	}
 
@@ -377,23 +424,6 @@ def timer_list() -> dict:
 	return _utils.timer_list()
 
 
-# ── Text diff ─────────────────────────────────────────────────────────────────
-
-@mcp.tool(tags={"utils"}, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
-def diff_text(
-	a:       Annotated[str, "Original text or file path"],
-	b:       Annotated[str, "Modified text or file path"],
-	context: Annotated[int, "Unchanged context lines shown around each change (default 3)"] = 3,
-	label_a: Annotated[str, "Label for original in diff header. Defaults to filename if a path is given."] = "a",
-	label_b: Annotated[str, "Label for modified in diff header. Defaults to filename if a path is given."] = "b",
-) -> dict:
-	"""Return a unified diff between two strings or files.
-
-	Each argument may be a file path — if it exists on disk, its contents are
-	read and used. Returns the diff string plus counts of added and removed lines."""
-	return _utils.diff_text(a, b, context=context, label_a=label_a, label_b=label_b)
-
-
 # ── Text embeddings & summarization ────────────────────────────────────────────
 
 @mcp.tool(tags={"text"}, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
@@ -439,6 +469,21 @@ def search_text(
 	For documents that require conversion (PDF, DOCX, HTML, URLs), use search_doc
 	instead — it handles conversion and caching automatically."""
 	return _text.search_text(source, query=query, sentences=sentences, unit=unit)
+
+
+@mcp.tool(tags={"text"}, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+def diff_text(
+	a:       Annotated[str, "Original text or file path"],
+	b:       Annotated[str, "Modified text or file path"],
+	context: Annotated[int, "Unchanged context lines shown around each change (default 3)"] = 3,
+	label_a: Annotated[str, "Label for original in diff header. Defaults to filename if a path is given."] = "a",
+	label_b: Annotated[str, "Label for modified in diff header. Defaults to filename if a path is given."] = "b",
+) -> dict:
+	"""Return a unified diff between two strings or files.
+
+	Each argument may be a file path — if it exists on disk, its contents are
+	read and used. Returns the diff string plus counts of added and removed lines."""
+	return _text.diff_text(a, b, context=context, label_a=label_a, label_b=label_b)
 
 
 # ── arXiv ───────────────────────────────────────────────────────────────────────
@@ -649,14 +694,17 @@ def convert_doc(
 	Returns the source, backend used, output format, and the converted content.
 	Use save_to to write large outputs directly to a file instead of returning
 	them inline."""
-	return _document.convert_doc(
-		source,
-		backend=backend,
-		output_format=output_format,
-		rich_pdf=rich_pdf,
-		strip_tables=strip_tables,
-		save_to=save_to,
-	)
+	try:
+		return _document.convert_doc(
+			source,
+			backend=backend,
+			output_format=output_format,
+			rich_pdf=rich_pdf,
+			strip_tables=strip_tables,
+			save_to=save_to,
+		)
+	except (ValueError, RuntimeError) as e:
+		return {"error": str(e), "source": source}
 
 
 @mcp.tool(tags={"document"}, annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=True))
@@ -702,4 +750,6 @@ if _disabled:
 
 
 if __name__ == "__main__":
-	mcp.run()
+	# Stdio MCP hosts (Cursor, VS Code) capture stderr as logs; Rich banners and
+	# ANSI formatting can show up as spurious "undefined" lines — keep stderr plain.
+	mcp.run(show_banner=False)

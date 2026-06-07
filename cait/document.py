@@ -8,6 +8,26 @@ from cait.fs import _DEFAULT_FILEDIR
 _DOC_CACHE_DIR        = _DEFAULT_FILEDIR / "doc_cache"
 _PLAINTEXT_EXTENSIONS = {".txt", ".md", ".rst"}
 
+
+def _read_plaintext_source(source: str) -> dict | None:
+	"""Read a local UTF-8 text file directly, skipping MarkItDown/Docling."""
+	from pathlib import Path
+
+	if "://" in source:
+		return None
+	p = Path(source)
+	if not p.is_file():
+		return None
+	if p.suffix.lower() not in _PLAINTEXT_EXTENSIONS:
+		return None
+	return {
+		"source":        str(p.resolve()),
+		"backend":       "native",
+		"output_format": "markdown" if p.suffix.lower() == ".md" else "text",
+		"content":       p.read_text(encoding="utf-8"),
+	}
+
+
 def convert_doc(
 	source: str,
 	backend: str = "auto",
@@ -49,7 +69,10 @@ def convert_doc(
 	if _format not in ("markdown", "html", "text"):
 		raise ValueError(f"Unknown output_format {output_format!r}. Choose 'markdown', 'html', or 'text'.")
 
-	if _backend == "auto":
+	plain = _read_plaintext_source(source)
+	if plain is not None:
+		result = plain
+	elif _backend == "auto":
 		try:
 			result = _convert_docling(source, _format, rich_pdf)
 		except Exception as docling_err:
@@ -158,10 +181,27 @@ def _convert_docling(source: str, output_format: str, rich_pdf: bool) -> dict:
 
 
 def _convert_markitdown(source: str) -> dict:
+	plain = _read_plaintext_source(source)
+	if plain is not None:
+		return plain
+
+	from pathlib import Path
 	from markitdown import MarkItDown
 
-	mid    = MarkItDown()
-	result = mid.convert(source)
+	try:
+		result = MarkItDown().convert(source)
+	except UnicodeDecodeError:
+		# MarkItDown's plaintext handler may decode as ASCII; fall back for UTF-8 files.
+		if "://" not in source:
+			p = Path(source)
+			if p.is_file():
+				return {
+					"source":        str(p.resolve()),
+					"backend":       "native",
+					"output_format": "text",
+					"content":       p.read_text(encoding="utf-8"),
+				}
+		raise
 
 	return {
 		"source":        source,
@@ -217,10 +257,9 @@ def _cached_convert(source: str, backend: str = "auto", strip_tables: bool = Fal
 	from pathlib import Path as _Path
 
 	# Plain text files: read directly, no conversion or caching needed.
-	if "://" not in source:
-		p = _Path(source)
-		if p.exists() and p.suffix.lower() in _PLAINTEXT_EXTENSIONS:
-			return p.read_text(encoding="utf-8"), False
+	plain = _read_plaintext_source(source)
+	if plain is not None:
+		return plain["content"], False
 
 	key        = _cache_key(source, backend, strip_tables)
 	cache_path = _DOC_CACHE_DIR / f"{key}.md"

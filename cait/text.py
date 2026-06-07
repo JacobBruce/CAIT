@@ -1,10 +1,11 @@
 """
-cait.text — Text embedding, similarity, and extractive summarization.
+cait.text — Text diff, embedding, similarity, and extractive summarization.
 
 Uses the all-MiniLM-L6-v2 ONNX model already bundled with ChromaDB,
 so no extra downloads or dependencies are required beyond chromadb itself.
 """
 
+import difflib
 import hashlib
 import re
 from collections import OrderedDict
@@ -58,6 +59,45 @@ def _read_source(s):
 	except (OSError, ValueError):
 		pass
 	return s
+
+
+def _diff_source(s, default_label):
+	"""Resolve a diff operand: file path → (contents, label), else literal text."""
+	try:
+		p = Path(s)
+		if p.exists() and p.is_file():
+			return p.read_text(encoding="utf-8"), p.name
+	except (OSError, ValueError):
+		pass
+	return s, default_label
+
+
+def diff_text(a, b, context=3, label_a="a", label_b="b"):
+	"""Return a unified diff between two strings or files.
+
+	Args:
+		a:        Original text or file path.
+		b:        Modified text or file path.
+		context:  Number of unchanged context lines shown around each change (default 3).
+		label_a:  Label for the original in the diff header.
+		label_b:  Label for the modified in the diff header.
+
+	Returns dict with: diff (unified diff string), changed (bool), added, removed (line counts).
+	"""
+	a, label_a = _diff_source(a, label_a)
+	b, label_b = _diff_source(b, label_b)
+
+	lines_a = a.splitlines(keepends=True)
+	lines_b = b.splitlines(keepends=True)
+	chunks = list(difflib.unified_diff(lines_a, lines_b, fromfile=label_a, tofile=label_b, n=context))
+	added   = sum(1 for line in chunks if line.startswith("+") and not line.startswith("+++"))
+	removed = sum(1 for line in chunks if line.startswith("-") and not line.startswith("---"))
+	return {
+		"diff":    "".join(chunks),
+		"changed": bool(chunks),
+		"added":   added,
+		"removed": removed,
+	}
 
 
 @lru_cache(maxsize=1)

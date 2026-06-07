@@ -1,11 +1,9 @@
 """
-cait.utils — Lightweight utility tools: datetime, named timers, and text diff.
+cait.utils — Lightweight utility tools: datetime and named timers.
 """
 
-import difflib
 import time
 from datetime import datetime
-from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # ── Named timers ──────────────────────────────────────────────────────────────
@@ -66,43 +64,4 @@ def get_datetime(timezone=None):
 		"utc_offset": now.strftime("%z"),
 		"weekday":    now.strftime("%A"),
 		"unix":       now.timestamp(),
-	}
-
-
-# ── Text diff ─────────────────────────────────────────────────────────────────
-
-def diff_text(a, b, context=3, label_a="a", label_b="b"):
-	"""Return a unified diff between two strings or files.
-
-	Args:
-		a:        Original text or file path.
-		b:        Modified text or file path.
-		context:  Number of unchanged context lines shown around each change (default 3).
-		label_a:  Label for the original in the diff header. Defaults to filename if a path is given.
-		label_b:  Label for the modified in the diff header. Defaults to filename if a path is given.
-
-	Returns dict with: diff (unified diff string), changed (bool), added, removed (line counts).
-	"""
-	def _src(s, default_label):
-		try:
-			p = Path(s)
-			if p.exists() and p.is_file():
-				return p.read_text(encoding="utf-8"), p.name
-		except (OSError, ValueError):
-			pass
-		return s, default_label
-
-	a, label_a = _src(a, label_a)
-	b, label_b = _src(b, label_b)
-
-	lines_a = a.splitlines(keepends=True)
-	lines_b = b.splitlines(keepends=True)
-	chunks = list(difflib.unified_diff(lines_a, lines_b, fromfile=label_a, tofile=label_b, n=context))
-	added   = sum(1 for l in chunks if l.startswith("+") and not l.startswith("+++"))
-	removed = sum(1 for l in chunks if l.startswith("-") and not l.startswith("---"))
-	return {
-		"diff":    "".join(chunks),
-		"changed": bool(chunks),
-		"added":   added,
-		"removed": removed,
 	}

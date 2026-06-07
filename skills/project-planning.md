@@ -18,6 +18,8 @@ argument-hint: "Optional: describe what you want to plan (e.g. 'new feature', 'f
 
 Before drafting anything, explore the workspace:
 
+- Check if `SURVEY.md` exists; if so, read it first
+- If `SURVEY.md` is missing and the repo is unfamiliar, run the **project-survey** skill before interviewing the user
 - Check if `PLAN.md` and `TASKS.md` already exist; if so, read them
 - Scan the file structure to understand the current state of the project
 - Look for any README, docs, or config files that reveal project goals or constraints

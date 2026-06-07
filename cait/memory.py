@@ -337,7 +337,7 @@ def mem_list(tags=None, limit=20, sort_by="created_at", ascending=False, scope="
 		ascending: If True, return oldest first. Default False (newest first).
 		scope:     'global' (default) or a project name for an isolated collection.
 
-	Returns dict with: count, entries list.
+	Returns dict with: count (number of entries returned, up to limit), entries list.
 	Each entry includes: id, title, description, tags, source, created_at, updated_at.
 	"""
 	col, err = _get_collection(scope)
@@ -362,7 +362,8 @@ def mem_list(tags=None, limit=20, sort_by="created_at", ascending=False, scope="
 		if not tags or _matches_tags(meta, tags)
 	]
 	entries.sort(key=lambda e: e.get(sort_by, ""), reverse=not ascending)
-	return {"count": len(entries), "entries": entries[:limit]}
+	returned = entries[:limit]
+	return {"count": len(returned), "entries": returned}
 
 
 def mem_delete(entry_id, scope="global"):

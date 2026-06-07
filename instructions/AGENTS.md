@@ -23,6 +23,44 @@ Use the Firecrawl tool for web searches when appropriate. Key parameters:
 - **`limit`** — number of results (default 5, max 10 recommended)
 - **`scrapeOptions`** — optionally fetch full page content inline; use sparingly with limit ≤ 5
 
+## Project orientation
+
+Use the CAIT skills in this order when entering a repo:
+
+- **Unfamiliar repo** → `project-survey` skill (produces `SURVEY.md`)
+- **New feature or roadmap** → `project-planning` skill (produces `PLAN.md` + `TASKS.md`)
+
+`SURVEY.md` = what exists. `PLAN.md` = what to build. `TASKS.md` = what to do now.
+
+If `SURVEY.md` is missing and you need to make changes, run **project-survey** before planning or coding.
+
+## Codebase graph (codebase-memory-mcp)
+
+Use **codebase-memory-mcp** for **structural truth in the repo you are editing** — call graphs, packages, entry points, and change impact. It is not a substitute for CAIT `mem_*` (cross-session notes) or for reading arbitrary files line-by-line when the graph already answers the question.
+
+### Index first
+
+If the project is not indexed yet, call `index_repository` with the repo root (or check `list_projects` / `index_status`). Re-index after large refactors if results look stale. Prefer graph tools over grepping the whole tree for “who calls X?” or “what depends on Y?”.
+
+### When to use which tool
+
+| Situation | Tool |
+|-----------|------|
+| New or unfamiliar repo | Run **project-survey** skill; it uses `get_architecture`, `search_graph`, etc. |
+| Before changing a function or type | `trace_path` (inbound and/or outbound) |
+| After editing files (uncommitted) | `detect_changes` for affected symbols and blast radius |
+| Need the implementation body | `get_code_snippet` (use qualified names from `search_graph`) |
+| Find symbols by name or kind | `search_graph` |
+| Ad-hoc graph questions | `query_graph` (read-only Cypher) |
+| Small Python-only repo, no index | CAIT `find_definitions` / `find_calls` |
+
+Use CAIT `read_file` when you need exact source lines (especially with `pattern` for a known file), not as a first step to map the whole codebase.
+
+### vs CAIT memory
+
+- **codebase-memory-mcp** — how *this* codebase is wired right now (derived from the index).
+- **CAIT `mem_*`** — facts you want to remember *across projects* (decisions, patterns, research summaries). Do not store call graphs or “file X imports Y” in memory when the index can answer that.
+
 ## Memory Database
 
 Use the CAIT memory tools to store and retrieve
@@ -109,3 +147,4 @@ Useful tips:
 - Use `unit="sentence"` (default) for general text or when hunting for specific short facts.
 - Leave `query` empty in `search_doc` to get a representative overview (summarize mode).
 - `convert_doc` and `search_doc` accept a URL to a document as well as file paths.
+
