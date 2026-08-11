@@ -2,7 +2,7 @@
   "manifest_version": "0.2",
   "name": "cait",
   "display_name": "CAIT",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Core AI Toolkit",
   "long_description": "A modular MCP server that extends AI assistants with practical capabilities: file I/O, a persistent Python REPL, AST-aware code analysis, semantic text search, document conversion, Wikipedia & arXiv tools, a persistent vector memory database, and other general utilities.\n\nA total of **38 tools across 9 modules**. Each module can be disabled independently via the `CAIT_DISABLE` environment variable. Made by AI for AI.\n\n## Requirements\n\n- Python 3.11+\n- Core: `fastmcp`, `chromadb`\n- Online research: `wikipedia-api`, `arxiv`\n- Document conversion: `docling` or `markitdown`",
   "author": {
