@@ -38,8 +38,9 @@ mcp = FastMCP(
 
 		"FILE SYSTEM (fs): get_file_info / get_dir_info for metadata without reading content; "
 		"read_file for bounded line reads or in-file regex search with context; "
-		"write_file to append or replace file text; download_file to fetch a URL to local storage; "
-		"fetch_url for HTTP GET/POST with optional save_to and convert=True for markdown conversion.\n\n"
+		"write_file to create/overwrite or append file text; download_file to fetch a URL to local storage; "
+		"fetch_url for HTTP GET/POST with optional save_to and convert=True for markdown conversion.\n"
+		"  convert=True omits raw HTML and returns markdown (inline text capped ~100KB; use save_to for full pages).\n\n"
 
 		"PYTHON REPL (repl): repl_exec runs code in a persistent session (variables survive between calls); "
 		"repl_read inspects a variable without printing; repl_vars lists all user-defined variables "
@@ -143,13 +144,13 @@ def get_dir_info(
 def write_file(
 	path:    Annotated[str,  "Absolute or relative path to the file"],
 	text:    Annotated[str,  "Text to write"],
-	mode:    Annotated[str,  "'append' (default) adds to an existing file; 'replace' overwrites or creates the file"] = "append",
+	mode:    Annotated[str,  "'replace' (default) overwrites or creates the file; 'append' adds to an existing file"] = "replace",
 	newline: Annotated[bool, "Ensure the written text ends with a newline (default True)"] = True,
 ) -> dict:
 	"""Write text to a file.
 
+	Default mode='replace' creates or overwrites the file (parent dirs are created).
 	Use mode='append' for NOTES.md, TASKS.md, log files, etc. (file must already exist).
-	Use mode='replace' to overwrite or create a file.
 
 	Returns the path, mode, characters written, and the new total line count."""
 	return file_write(path, text, mode=mode, newline=newline)
@@ -176,19 +177,20 @@ def fetch_url(
 	headers: Annotated[dict | None, "Optional request headers (e.g. {\"Authorization\": \"Bearer ...\"})"] = None,
 	data:    Annotated[str | dict,  "Optional POST body. A dict is form-encoded; a str is sent as-is."] = "",
 	save_to: Annotated[str,       "If given, write the response body to this file path instead of returning inline content."] = "",
-	convert: Annotated[bool,      "If True, run the saved/fetched content through convert_doc and add a 'markdown' field."] = False,
+	convert: Annotated[bool,      "If True, convert via Docling/MarkItDown and return 'markdown' (raw body is omitted). Prefer save_to for large pages."] = False,
 ) -> dict:
 	"""Fetch a URL and return the response as text.
 
 	Supports GET and POST, custom headers, and optional JSON/form bodies.
 	Use save_to to write large responses (e.g. HTML pages, API results) to a file
 	and avoid flooding the context window. Combine with convert=True to get clean
-	markdown from HTML pages via MarkItDown.
+	markdown from HTML pages via MarkItDown/Docling (raw HTML is not returned when
+	conversion succeeds). Inline content/markdown is capped at ~100KB.
 
 	Returns: url, status_code, content_type, size_bytes.
-	Plus 'content' unless save_to is given.
+	Plus 'content' unless save_to is given or convert succeeds.
 	Plus 'saved_to' when save_to is given.
-	Plus 'markdown' when convert=True."""
+	Plus 'markdown' when convert=True succeeds."""
 	return _fetch_url(
 		url,
 		method=method,
@@ -693,9 +695,9 @@ def convert_doc(
 
 	Returns the source, backend used, output format, and the converted content.
 	Use save_to to write large outputs directly to a file instead of returning
-	them inline."""
+	them inline. Inline content is capped at ~100KB."""
 	try:
-		return _document.convert_doc(
+		result = _document.convert_doc(
 			source,
 			backend=backend,
 			output_format=output_format,
@@ -705,6 +707,15 @@ def convert_doc(
 		)
 	except (ValueError, RuntimeError) as e:
 		return {"error": str(e), "source": source}
+	if isinstance(result, dict) and "content" in result and not save_to:
+		from cait.fs import cap_inline_text
+		text, trunc_meta = cap_inline_text(result["content"])
+		result["content"] = text
+		if trunc_meta:
+			result["truncated"] = True
+			result["original_bytes"] = trunc_meta["original_bytes"]
+			result["max_bytes"] = trunc_meta["max_bytes"]
+	return result
 
 
 @mcp.tool(tags={"document"}, annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=True))

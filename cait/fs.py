@@ -13,6 +13,12 @@ from pathlib import Path
 _DEFAULT_EXCLUDE = {".git", ".venv", "__pycache__", ".mypy_cache", ".pytest_cache", "node_modules"}
 _DEFAULT_FILEDIR = Path(os.environ.get("CAIT_FILES_PATH", Path.home() / ".cait" / "files"))
 _DEFAULT_MAX_READ_BYTES = 256_000
+# Cap for tool results returned inline (no save_to) — keeps MCP/agent context usable.
+_DEFAULT_MAX_INLINE_BYTES = 100_000
+_DATA_URI_RE = re.compile(
+	r"data:[^\s\"'<>]*;base64,[A-Za-z0-9+/=\s]+",
+	re.IGNORECASE,
+)
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -27,6 +33,40 @@ def _human_size(n_bytes):
 def _iso(ts):
 	"""Convert a POSIX timestamp to an ISO 8601 string in UTC."""
 	return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+
+def strip_data_uris(text: str) -> str:
+	"""Replace embedded data:…;base64,… blobs with a short placeholder."""
+	if not text:
+		return text or ""
+	return _DATA_URI_RE.sub("[omitted data URI]", text)
+
+
+def cap_inline_text(
+	text: str,
+	max_bytes: int = _DEFAULT_MAX_INLINE_BYTES,
+	*,
+	hint: str = "Use save_to=... to keep the full response on disk, then search_doc or read_file.",
+) -> tuple[str, dict]:
+	"""Strip data URIs and truncate UTF-8 text to max_bytes for inline tool results.
+
+	Returns (text, meta) where meta may include truncated/original_bytes/max_bytes.
+	"""
+	if text is None:
+		text = ""
+	text = strip_data_uris(str(text))
+	encoded = text.encode("utf-8")
+	if len(encoded) <= max_bytes:
+		return text, {}
+	cut = encoded[:max_bytes].decode("utf-8", errors="ignore")
+	note = (
+		f"\n\n[truncated: showing {max_bytes} of {len(encoded)} bytes. {hint}]"
+	)
+	return cut + note, {
+		"truncated": True,
+		"original_bytes": len(encoded),
+		"max_bytes": max_bytes,
+	}
 
 
 def _count_lines(path):
@@ -351,13 +391,13 @@ def dir_info(path, pattern="*", recursive=False, exclude=None):
 	}
 
 
-def file_write(path, text, mode="append", newline=True):
-	"""Write text to a file (append or replace).
+def file_write(path, text, mode="replace", newline=True):
+	"""Write text to a file (replace or append).
 
 	Args:
 		path:    Path to the file (str or Path).
 		text:    Text to write.
-		mode:    'append' adds to an existing file; 'replace' overwrites or creates it.
+		mode:    'replace' (default) overwrites or creates the file; 'append' adds to an existing file.
 		newline: If True (default), ensure the written text ends with a newline.
 
 	Returns dict with path, mode, chars_written, and the file's total line count.
@@ -440,14 +480,15 @@ def fetch_url(url, method="GET", headers=None, data=None, save_to="", convert=Fa
 		          sent as-is with Content-Type: text/plain unless overridden in headers.
 		save_to:  If given, write the response body to this file path and omit 'content'
 		          from the returned dict. The directory is created if it does not exist.
-		convert:  If True, feed the saved/fetched content through convert_doc and return
-		          'markdown' in the result. Requires save_to when the response is binary
-		          (e.g. PDF); for text responses convert works inline.
+		convert:  If True, run the response through convert_doc and return 'markdown'.
+		          On success, raw 'content' is omitted (same idea as save_to). Large pages
+		          should still use save_to — inline markdown is capped at ~100KB.
 
 	Returns dict with: url, status_code, content_type, size_bytes.
-	Plus 'content' (str) unless save_to is given.
+	Plus 'content' (str) unless save_to is given or convert succeeds.
 	Plus 'saved_to' (path) when save_to is given.
-	Plus 'markdown' (str) when convert=True.
+	Plus 'markdown' (str) when convert=True succeeds.
+	Inline text fields are capped (~100KB); truncated results include truncation flags.
 	"""
 	import urllib.request
 	import urllib.parse
@@ -479,39 +520,80 @@ def fetch_url(url, method="GET", headers=None, data=None, save_to="", convert=Fa
 
 	result = {"url": url, "status_code": status, "content_type": ctype, "size_bytes": len(raw)}
 
+	decoded = None
+	encoding = "utf-8"
+	if "charset=" in ctype:
+		encoding = ctype.split("charset=")[-1].split(";")[0].strip() or "utf-8"
+	try:
+		decoded = raw.decode(encoding, errors="replace")
+	except Exception:
+		decoded = raw.decode("latin-1", errors="replace")
+
 	if save_to:
 		p = Path(save_to)
 		p.parent.mkdir(parents=True, exist_ok=True)
 		p.write_bytes(raw)
 		result["saved_to"] = str(p.resolve())
 	else:
-		# Try to decode as text
-		encoding = "utf-8"
-		if "charset=" in ctype:
-			encoding = ctype.split("charset=")[-1].split(";")[0].strip()
-		try:
-			result["content"] = raw.decode(encoding, errors="replace")
-		except Exception:
-			result["content"] = raw.decode("latin-1", errors="replace")
+		result["content"] = decoded
 
 	if convert:
-		# Lazy import to avoid circular dependency at module load time
 		from cait.document import convert_doc
-		src = result.get("saved_to") or save_to
-		if src:
+		import tempfile, os
+
+		src = result.get("saved_to") or ""
+		tmp = None
+		try:
+			if not src:
+				suffix = ".html" if "html" in (ctype or "").lower() else ".txt"
+				with tempfile.NamedTemporaryFile(
+					delete=False, suffix=suffix, mode="w", encoding="utf-8",
+				) as f:
+					f.write(decoded or "")
+					tmp = f.name
+				src = tmp
 			md = convert_doc(src)
-			result["markdown"] = md.get("content", md.get("error", ""))
-		else:
-			# No file saved — wrap inline text in a temp file for conversion
-			import tempfile, os
-			suffix = ".html" if "html" in ctype else ".txt"
-			with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, mode="w", encoding="utf-8") as f:
-				f.write(result.get("content", ""))
-				tmp = f.name
-			try:
-				md = convert_doc(tmp)
-				result["markdown"] = md.get("content", md.get("error", ""))
-			finally:
-				os.unlink(tmp)
+			md_text = md.get("content")
+			if not md_text:
+				raise RuntimeError(md.get("error") or "convert_doc returned empty content")
+			md_text, trunc_meta = cap_inline_text(md_text)
+			result["markdown"] = md_text
+			if md.get("backend"):
+				result["convert_backend"] = md["backend"]
+			if trunc_meta:
+				result["markdown_truncated"] = True
+				result["markdown_original_bytes"] = trunc_meta["original_bytes"]
+				result["markdown_max_bytes"] = trunc_meta["max_bytes"]
+			# Never ship raw HTML/body alongside converted markdown.
+			result.pop("content", None)
+		except Exception as e:
+			result.pop("content", None)
+			result["error"] = f"convert failed: {e}"
+			result["hint"] = (
+				"Save the page with save_to=... then use convert_doc or search_doc "
+				"on the saved file instead of returning it inline."
+			)
+			if decoded and not save_to:
+				preview, _ = cap_inline_text(
+					decoded,
+					max_bytes=min(2_000, _DEFAULT_MAX_INLINE_BYTES),
+					hint="Full body omitted after convert failure.",
+				)
+				result["content_preview"] = preview
+		finally:
+			if tmp:
+				try:
+					os.unlink(tmp)
+				except OSError:
+					pass
+		return result
+
+	if "content" in result:
+		text, trunc_meta = cap_inline_text(result["content"])
+		result["content"] = text
+		if trunc_meta:
+			result["truncated"] = True
+			result["original_bytes"] = trunc_meta["original_bytes"]
+			result["max_bytes"] = trunc_meta["max_bytes"]
 
 	return result

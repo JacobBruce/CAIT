@@ -158,14 +158,25 @@ def wiki_section(title, section_title, language="en"):
 			"available": available,
 		}
 
-	return {
+	from cait.fs import cap_inline_text
+	text, trunc_meta = cap_inline_text(section.text or "")
+	subs = []
+	for s in section.sections:
+		st, _ = cap_inline_text(s.text or "", max_bytes=min(20_000, 100_000))
+		subs.append({"title": s.title, "text": st})
+	out = {
 		"title":       page.title,
 		"section":     section.title,
-		"text":        section.text,
-		"subsections": [{"title": s.title, "text": s.text} for s in section.sections],
+		"text":        text,
+		"subsections": subs,
 		"url":         page.fullurl,
 		"language":    language,
 	}
+	if trunc_meta:
+		out["truncated"] = True
+		out["original_bytes"] = trunc_meta["original_bytes"]
+		out["max_bytes"] = trunc_meta["max_bytes"]
+	return out
 
 
 def wiki_page(title, language="en", summary_only=False):
@@ -190,5 +201,11 @@ def wiki_page(title, language="en", summary_only=False):
 		"language": language,
 	}
 	if not summary_only:
-		result["text"] = page.text
+		from cait.fs import cap_inline_text
+		text, trunc_meta = cap_inline_text(page.text or "")
+		result["text"] = text
+		if trunc_meta:
+			result["truncated"] = True
+			result["original_bytes"] = trunc_meta["original_bytes"]
+			result["max_bytes"] = trunc_meta["max_bytes"]
 	return result

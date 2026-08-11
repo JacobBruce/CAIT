@@ -158,6 +158,13 @@ def arxiv_paper(paper_id, full_text=False, save_to=""):
 		conv = convert_doc(str(local_pdf), save_to=save_to)
 		if save_to:
 			return {**meta, "pdf_path": str(local_pdf), "saved_to": conv["saved_to"], "size_bytes": conv["size_bytes"]}
-		return {**meta, "pdf_path": str(local_pdf), "markdown": conv["content"]}
+		from cait.fs import cap_inline_text
+		md_text, trunc_meta = cap_inline_text(conv.get("content") or "")
+		out = {**meta, "pdf_path": str(local_pdf), "markdown": md_text}
+		if trunc_meta:
+			out["truncated"] = True
+			out["original_bytes"] = trunc_meta["original_bytes"]
+			out["max_bytes"] = trunc_meta["max_bytes"]
+		return out
 	except Exception as e:
 		return {"error": f"PDF conversion failed: {e}"}

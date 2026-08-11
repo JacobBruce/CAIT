@@ -162,9 +162,9 @@ Add [AGENTS.md](instructions/AGENTS.md) as a user or project rule (Settings → 
 | `get_file_info` | Metadata for a single file: size, line count, permissions, timestamps. Does not read content. |
 | `get_dir_info` | Directory listing with per-entry metadata. Supports glob patterns and recursion. |
 | `read_file` | Read a text file with a `max_bytes` cap and `lineno\|text` prefixes. Slice mode: `offset` + `limit` (negative `limit` = tail, e.g. `-50`). Search mode: `pattern` with `context` lines around hits (in-file grep). |
-| `write_file` | Write text to a file. `mode='append'` (default) or `'replace'`. Useful for NOTES.md, TASKS.md, log files. |
+| `write_file` | Write text to a file. `mode='replace'` (default) creates/overwrites; `mode='append'` adds to an existing file (NOTES.md, TASKS.md, logs). |
 | `download_file` | Download a URL to `~/.cait/files/` (or `CAIT_FILES_PATH`). Returns the local path. |
-| `fetch_url` | HTTP GET/POST with custom headers and body. Use `save_to` to avoid large responses in context. `convert=True` returns clean markdown via Docling or MarkItDown. |
+| `fetch_url` | HTTP GET/POST with custom headers and body. Use `save_to` for large pages. `convert=True` returns markdown and omits raw HTML (inline text capped ~100KB). |
 
 ### Persistent Python REPL — `repl`
 
