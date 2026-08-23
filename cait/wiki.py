@@ -11,6 +11,8 @@ from functools import lru_cache
 
 import wikipediaapi
 
+from cait.errors import tool_error
+
 _USER_AGENT = f"CAIT/1.0 (FastMCP; {platform.system()}; {platform.release()})"
 
 
@@ -28,9 +30,14 @@ def _get_page(title, language):
 	try:
 		page = wiki.page(title)
 	except wikipediaapi.WikipediaException as e:
-		return None, {"error": str(e), "title": title}
+		return None, tool_error(str(e), hint="Retry, or check the title and language code.", title=title)
 	if not page.exists():
-		return None, {"error": f"Page not found: {title!r}", "title": title, "language": language}
+		return None, tool_error(
+			f"Page not found: {title!r}",
+			hint="Use wiki_search to find the canonical title.",
+			title=title,
+			language=language,
+		)
 	return page, None
 
 
@@ -80,7 +87,7 @@ def wiki_search(query, limit=5, language="en"):
 	try:
 		results = wiki.search(query, limit=limit)
 	except wikipediaapi.WikipediaException as e:
-		return {"error": str(e)}
+		return tool_error(str(e), hint="Retry the search, or simplify the query.")
 
 	pages = []
 	for title, page in results.pages.items():
@@ -152,11 +159,12 @@ def wiki_section(title, section_title, language="en"):
 
 	if section is None:
 		available = [s.title for s in _iter_sections(page.sections)]
-		return {
-			"error":     f"Section {section_title!r} not found",
-			"title":     page.title,
-			"available": available,
-		}
+		return tool_error(
+			f"Section {section_title!r} not found",
+			hint="Call wiki_sections first and use an exact section title from that list.",
+			title=page.title,
+			available=available,
+		)
 
 	from cait.fs import cap_inline_text
 	text, trunc_meta = cap_inline_text(section.text or "")

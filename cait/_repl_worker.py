@@ -11,6 +11,10 @@ import json
 import sys
 import traceback
 
+_MAX_REPR = 4000
+_MAX_LIST_REPR = 200
+_MAX_VALUE_JSON = 8000
+
 # Shared namespace that persists across all executions
 namespace = {"__name__": "__repl__", "__doc__": None}
 
@@ -52,15 +56,28 @@ def read_var(name):
 	obj = namespace[name]
 	type_name = type(obj).__name__
 	repr_str = repr(obj)
+	repr_truncated = False
+	if len(repr_str) > _MAX_REPR:
+		repr_str = repr_str[:_MAX_REPR] + "…"
+		repr_truncated = True
 
 	# Attempt JSON serialization for primitive types; fall back to None
+	value = None
 	try:
-		json.dumps(obj)
-		value = obj
+		encoded = json.dumps(obj)
+		if len(encoded) <= _MAX_VALUE_JSON:
+			value = obj
 	except (TypeError, ValueError):
-		value = None
+		pass
 
-	return {"found": True, "name": name, "repr": repr_str, "type": type_name, "value": value}
+	return {
+		"found":          True,
+		"name":           name,
+		"repr":           repr_str,
+		"repr_truncated": repr_truncated,
+		"type":           type_name,
+		"value":          value,
+	}
 
 
 def list_vars():
@@ -72,13 +89,15 @@ def list_vars():
 		if name.startswith("__") or name in builtin_names:
 			continue
 		repr_str = repr(obj)
-		if len(repr_str) > 200:
-			repr_str = repr_str[:200] + "…"
+		if len(repr_str) > _MAX_LIST_REPR:
+			repr_str = repr_str[:_MAX_LIST_REPR] + "…"
+		value = None
 		try:
-			json.dumps(obj)
-			value = obj
+			encoded = json.dumps(obj)
+			if len(encoded) <= _MAX_VALUE_JSON:
+				value = obj
 		except (TypeError, ValueError):
-			value = None
+			pass
 		entries[name] = {"type": type(obj).__name__, "repr": repr_str, "value": value}
 	return {"vars": entries, "count": len(entries)}
 
@@ -100,7 +119,14 @@ def main():
 			else:
 				result = execute(req.get("code", ""))
 
-		sys.stdout.write(json.dumps(result) + "\n")
+		try:
+			sys.stdout.write(json.dumps(result) + "\n")
+		except (TypeError, ValueError) as e:
+			sys.stdout.write(json.dumps({
+				"stdout": "",
+				"stderr": "",
+				"error":  f"Result not JSON-serializable: {e}",
+			}) + "\n")
 		sys.stdout.flush()
 
 

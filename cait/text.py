@@ -7,10 +7,14 @@ so no extra downloads or dependencies are required beyond chromadb itself.
 
 import difflib
 import hashlib
+import json
 import re
 from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
+
+from cait.fs import resolve_path
+from cait.errors import tool_error
 
 import numpy as np
 
@@ -50,10 +54,34 @@ def _get_chunk_vecs(text: str, unit: str):
 	return (chunks, vecs), None
 
 
+def _looks_like_path(s):
+	"""True when *s* is probably a filesystem path, not a short literal string.
+
+	Bare tokens like ``a`` / ``b`` are never treated as paths even if such files
+	exist. Paths with a separator, ``~/``, ``./``, or a short alphanumeric
+	suffix (``.md``, ``.py``) still resolve to files when they exist.
+	"""
+	if not isinstance(s, str) or not s or "\n" in s or "\r" in s:
+		return False
+	if len(s) > 512:
+		return False
+	p = Path(s)
+	if p.is_absolute() or s.startswith("~/") or s.startswith("~\\"):
+		return True
+	if s.startswith("./") or s.startswith(".\\"):
+		return True
+	if "/" in s or "\\" in s:
+		return True
+	suffix = p.suffix
+	return bool(suffix) and 2 <= len(suffix) <= 8 and suffix[1:].isalnum()
+
+
 def _read_source(s):
-	"""If s is an existing file path, return its text content; otherwise return s unchanged."""
+	"""If s looks like an existing file path, return its text; otherwise return s."""
+	if not _looks_like_path(s):
+		return s
 	try:
-		p = Path(s)
+		p = resolve_path(s)
 		if p.exists() and p.is_file():
 			return p.read_text(encoding="utf-8")
 	except (OSError, ValueError):
@@ -63,8 +91,10 @@ def _read_source(s):
 
 def _diff_source(s, default_label):
 	"""Resolve a diff operand: file path → (contents, label), else literal text."""
+	if not _looks_like_path(s):
+		return s, default_label
 	try:
-		p = Path(s)
+		p = resolve_path(s)
 		if p.exists() and p.is_file():
 			return p.read_text(encoding="utf-8"), p.name
 	except (OSError, ValueError):
@@ -114,12 +144,15 @@ def _embed(texts):
 	"""Embed a list of strings. Returns (list_of_np_arrays, error_dict_or_None)."""
 	ef = _get_ef()
 	if ef is None:
-		return None, {"error": "chromadb is not installed"}
+		return None, tool_error(
+			"chromadb is not installed",
+			hint="Run: pip install chromadb — encode_text, search_text, and mem_* need it.",
+		)
 	try:
 		raw = ef(texts)
 		return [np.array(v, dtype=np.float32) for v in raw], None
 	except Exception as e:
-		return None, {"error": str(e)}
+		return None, tool_error(str(e), hint="The embedding model failed. Retry, or pass shorter text.")
 
 
 def _cosine(a, b):
@@ -176,14 +209,16 @@ def strip_tables(text):
 
 _EF_MODEL_NAME = "all-MiniLM-L6-v2"
 
-def encode_text(texts):
+def encode_text(texts, save_to=""):
 	"""Embed one or more texts using all-MiniLM-L6-v2.
 
 	Args:
-		texts: A string or list of strings to embed.
+		texts:   A string or list of strings to embed.
+		save_to: If given, write the 384-d vectors as JSON and omit them
+		         from the return value.
 
-	Returns dict with model name, embedding dimensions, count, and the
-	embeddings as a list of float lists.
+	Returns dict with model name, embedding dimensions, count, and either
+	embeddings (inline) or saved_to.
 	"""
 	if isinstance(texts, str):
 		texts = [texts]
@@ -193,12 +228,21 @@ def encode_text(texts):
 	vecs, err = _embed(texts)
 	if err:
 		return err
-	return {
+	out = {
 		"model":      _EF_MODEL_NAME,
 		"dimensions": len(vecs[0]),
 		"count":      len(vecs),
-		"embeddings": [v.tolist() for v in vecs],
 	}
+	payload = [v.tolist() for v in vecs]
+	if save_to:
+		p = resolve_path(save_to)
+		p.parent.mkdir(parents=True, exist_ok=True)
+		p.write_text(json.dumps(payload), encoding="utf-8")
+		out["saved_to"]   = str(p)
+		out["size_bytes"] = p.stat().st_size
+	else:
+		out["embeddings"] = payload
+	return out
 
 
 def text_similarity(a, b):

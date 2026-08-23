@@ -12,11 +12,14 @@ Storage path defaults to ~/.cait/memory; override with the CAIT_MEMORY_PATH env 
 Requires: pip install chromadb
 """
 
+import json
 import os
 import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+from cait.errors import tool_error
 
 try:
 	import chromadb
@@ -24,7 +27,10 @@ try:
 except ImportError:
 	_CHROMADB_AVAILABLE = False
 
-_UNAVAILABLE = {"error": "chromadb is not installed — run: pip install chromadb"}
+_UNAVAILABLE = tool_error(
+	"chromadb is not installed",
+	hint="Run: pip install chromadb",
+)
 
 _DB_PATH = Path(os.environ.get("CAIT_MEMORY_PATH", Path.home() / ".cait" / "memory"))
 
@@ -36,13 +42,17 @@ _collections: dict         = {}  # name → chromadb.Collection
 
 def _collection_name(scope: str) -> str:
 	"""Map a scope string to a ChromaDB collection name."""
-	if scope == "global":
+	if not scope or scope == "global":
 		return "cait_memory"
 	# Sanitize: keep only alphanumerics, hyphens, underscores
 	slug = re.sub(r"[^a-zA-Z0-9_-]", "_", scope.strip()).strip("_-")
 	if not slug:
 		raise ValueError(f"Invalid scope: {scope!r}")
-	return f"cait_{slug}"
+	name = f"cait_{slug}"
+	# Do not collide with the global collection name (scope="memory" → cait_memory).
+	if name == "cait_memory":
+		return "cait_proj_memory"
+	return name
 
 
 def _get_collection(scope="global"):
@@ -51,7 +61,10 @@ def _get_collection(scope="global"):
 	try:
 		name = _collection_name(scope)
 	except ValueError as e:
-		return None, {"error": str(e)}
+		return None, tool_error(
+			str(e),
+			hint="scope must be 'global' or a short project name (letters, digits, _-).",
+		)
 
 	if name in _collections:
 		return _collections[name], None
@@ -69,7 +82,10 @@ def _get_collection(scope="global"):
 		_collections[name] = col
 		return col, None
 	except Exception as e:
-		return None, {"error": f"Failed to open memory database: {e}"}
+		return None, tool_error(
+			f"Failed to open memory database: {e}",
+			hint="Check CAIT_MEMORY_PATH is writable and chromadb is installed.",
+		)
 
 
 def _now():
@@ -77,25 +93,55 @@ def _now():
 
 
 def _encode_tags(tags):
-	"""Encode a tag list as a space-padded string for safe substring filtering.
+	"""Serialize tags as a JSON list so values may contain spaces.
 
-	E.g. ["research", "ai"] → " research ai "
-	Using space-padding ensures "$contains: ' research '" won't match "deep-research".
+	Legacy space-padded strings (" research ai ") are still accepted by
+	``_decode_tags``. New writes always use JSON.
 	"""
 	if not tags:
-		return " "
-	return " " + " ".join(t.strip() for t in tags if t.strip()) + " "
+		return "[]"
+	if isinstance(tags, str):
+		tags = [tags]
+	cleaned = [str(t).strip() for t in tags if str(t).strip()]
+	return json.dumps(cleaned, ensure_ascii=False)
 
 
 def _decode_tags(tags_str):
-	"""Decode a space-padded tag string back to a list."""
-	return [t for t in (tags_str or "").split() if t]
+	"""Decode JSON tags, or a legacy space-padded string."""
+	s = (tags_str or "").strip()
+	if not s:
+		return []
+	if s.startswith("["):
+		try:
+			parsed = json.loads(s)
+			if isinstance(parsed, list):
+				return [str(t) for t in parsed if str(t).strip()]
+		except json.JSONDecodeError:
+			pass
+	return [t for t in s.split() if t]
 
 
 def _matches_tags(metadata, tags):
-	"""Return True if the entry's tag string contains all required tags."""
-	tag_str = metadata.get("tags", "")
-	return all(f" {t} " in tag_str for t in tags)
+	"""Return True if the entry has all required tags (exact string match)."""
+	if isinstance(tags, str):
+		tags = [tags]
+	have = set(_decode_tags(metadata.get("tags", "")))
+	need = [str(t).strip() for t in tags if str(t).strip()]
+	return all(t in have for t in need)
+
+
+_SNIPPET_CHARS = 500
+
+
+def _snippet(text, n=_SNIPPET_CHARS):
+	text = text or ""
+	if len(text) <= n:
+		return text
+	cut = text[:n]
+	sp = cut.rfind(" ")
+	if sp >= n // 2:
+		cut = cut[:sp]
+	return cut.rstrip() + "…"
 
 
 def _format_entry(entry_id, document, metadata, include_content=True):
@@ -152,7 +198,7 @@ def mem_add(title, content, tags=None, description="", source="", entry_id=None,
 	try:
 		col.add(documents=[content], metadatas=[metadata], ids=[eid])
 	except Exception as e:
-		return {"error": str(e)}
+		return tool_error(str(e), hint="The memory database rejected this operation. Check the arguments and retry.")
 	return {"id": eid, "title": title, "added": True, "scope": scope}
 
 
@@ -176,7 +222,10 @@ def mem_set(entry_id, title=None, content=None, tags=None, description=None, sou
 
 	existing = col.get(ids=[entry_id], include=["documents", "metadatas"])
 	if not existing["ids"]:
-		return {"error": f"No memory entry with id {entry_id!r}"}
+		return tool_error(
+			f"No memory entry with id {entry_id!r}",
+			hint="Use mem_list, mem_search, or mem_find to get a valid entry_id.",
+		)
 
 	old_meta = existing["metadatas"][0]
 	old_doc  = existing["documents"][0]
@@ -193,7 +242,7 @@ def mem_set(entry_id, title=None, content=None, tags=None, description=None, sou
 	try:
 		col.update(ids=[entry_id], documents=[new_doc], metadatas=[new_meta])
 	except Exception as e:
-		return {"error": str(e)}
+		return tool_error(str(e), hint="The memory database rejected this operation. Check the arguments and retry.")
 	return {"id": entry_id, "updated": True}
 
 
@@ -220,7 +269,10 @@ def mem_edit(entry_id, pattern=None, text="", scope="global"):
 
 	existing = col.get(ids=[entry_id], include=["documents", "metadatas"])
 	if not existing["ids"]:
-		return {"error": f"No memory entry with id {entry_id!r}"}
+		return tool_error(
+			f"No memory entry with id {entry_id!r}",
+			hint="Use mem_list, mem_search, or mem_find to get a valid entry_id.",
+		)
 
 	old_content = existing["documents"][0]
 	meta        = existing["metadatas"][0]
@@ -229,12 +281,18 @@ def mem_edit(entry_id, pattern=None, text="", scope="global"):
 		try:
 			new_content = re.sub(pattern, text, old_content)
 		except re.error as e:
-			return {"error": f"Invalid regex pattern: {e}"}
+			return tool_error(
+				f"Invalid regex pattern: {e}",
+				hint="Use Python re syntax. For a literal string, re.escape it first.",
+			)
 	elif text:
 		sep         = "" if old_content.endswith("\n") else "\n"
 		new_content = old_content + sep + text
 	else:
-		return {"error": "Provide either 'pattern' and/or 'text' arguments"}
+		return tool_error(
+			"Provide either 'pattern' and/or 'text' arguments",
+			hint="pattern+text = regex replace; text alone = append to the entry.",
+		)
 
 	if new_content == old_content:
 		return {"id": entry_id, "updated": False, "note": "Content unchanged"}
@@ -243,7 +301,7 @@ def mem_edit(entry_id, pattern=None, text="", scope="global"):
 	try:
 		col.update(ids=[entry_id], documents=[new_content], metadatas=[meta])
 	except Exception as e:
-		return {"error": str(e)}
+		return tool_error(str(e), hint="The memory database rejected this operation. Check the arguments and retry.")
 
 	return {
 		"id":         entry_id,
@@ -257,13 +315,17 @@ def mem_search(query, limit=5, tags=None, scope="global"):
 	"""Search memory by semantic similarity to a query string.
 
 	Args:
-		query: Natural language query — finds entries whose content is semantically similar.
+		query: Natural language query — finds entries whose content is
+		       semantically similar.
 		limit: Maximum number of results (default 5).
-		tags:  Optional list of tags to filter by (AND logic — entry must have all given tags).
+		tags:  Optional list of tags to filter by (AND — entry must have all
+		       given tags). Applied before ranking, so tagged hits are not
+		       dropped by ANN over-fetch.
 		scope: 'global' (default) or a project name for an isolated collection.
 
 	Returns dict with: query, results list.
-	Each result includes: id, title, description, tags, source, created_at, updated_at, content, score.
+	Each result includes: id, title, description, tags, source, created_at,
+	updated_at, snippet, content_chars, score. Use mem_get for full content.
 	Score is cosine similarity (0–1, higher is more similar).
 	"""
 	col, err = _get_collection(scope)
@@ -274,18 +336,33 @@ def mem_search(query, limit=5, tags=None, scope="global"):
 	if count == 0:
 		return {"query": query, "results": []}
 
-	# Overfetch when tag filtering so we can reach the requested limit after filtering
-	n_fetch = min(count, limit * 4 if tags else limit)
+	query_ids = None
+	n_fetch = min(count, limit)
+	if tags:
+		try:
+			meta_scan = col.get(include=["metadatas"])
+		except Exception as e:
+			return tool_error(str(e), hint="The memory database rejected this operation. Check the arguments and retry.")
+		query_ids = [
+			eid for eid, meta in zip(meta_scan["ids"], meta_scan["metadatas"])
+			if _matches_tags(meta, tags)
+		]
+		if not query_ids:
+			return {"query": query, "results": []}
+		n_fetch = min(len(query_ids), limit)
+
 	kwargs = {
 		"query_texts": [query],
 		"n_results":   n_fetch,
 		"include":     ["documents", "metadatas", "distances"],
 	}
+	if query_ids is not None:
+		kwargs["ids"] = query_ids
 
 	try:
 		results = col.query(**kwargs)
 	except Exception as e:
-		return {"error": str(e)}
+		return tool_error(str(e), hint="The memory database rejected this operation. Check the arguments and retry.")
 
 	entries = []
 	for eid, doc, meta, dist in zip(
@@ -294,9 +371,9 @@ def mem_search(query, limit=5, tags=None, scope="global"):
 		results["metadatas"][0],
 		results["distances"][0],
 	):
-		if tags and not _matches_tags(meta, tags):
-			continue
-		entry = _format_entry(eid, doc, meta, include_content=True)
+		entry = _format_entry(eid, doc, meta, include_content=False)
+		entry["snippet"] = _snippet(doc)
+		entry["content_chars"] = len(doc or "")
 		entry["score"] = round(1 - dist, 4)
 		entries.append(entry)
 		if len(entries) >= limit:
@@ -320,7 +397,10 @@ def mem_get(entry_id, scope="global"):
 
 	result = col.get(ids=[entry_id], include=["documents", "metadatas"])
 	if not result["ids"]:
-		return {"error": f"No memory entry with id {entry_id!r}"}
+		return tool_error(
+			f"No memory entry with id {entry_id!r}",
+			hint="Use mem_list, mem_search, or mem_find to get a valid entry_id.",
+		)
 
 	return _format_entry(result["ids"][0], result["documents"][0], result["metadatas"][0])
 
@@ -337,7 +417,8 @@ def mem_list(tags=None, limit=20, sort_by="created_at", ascending=False, scope="
 		ascending: If True, return oldest first. Default False (newest first).
 		scope:     'global' (default) or a project name for an isolated collection.
 
-	Returns dict with: count (number of entries returned, up to limit), entries list.
+	Returns dict with: count (rows in this result), total (matching rows),
+	truncated, limit, entries list.
 	Each entry includes: id, title, description, tags, source, created_at, updated_at.
 	"""
 	col, err = _get_collection(scope)
@@ -345,16 +426,17 @@ def mem_list(tags=None, limit=20, sort_by="created_at", ascending=False, scope="
 		return err
 
 	if sort_by not in ("created_at", "updated_at"):
-		return {"error": f"sort_by must be 'created_at' or 'updated_at', got '{sort_by}'"}
+		return tool_error(
+			f"sort_by must be 'created_at' or 'updated_at', got '{sort_by}'",
+			hint="Pass sort_by='created_at' or sort_by='updated_at'.",
+		)
 
 	# ChromaDB has no ORDER BY, so we must fetch all metadata and sort in Python.
 	# We fetch metadata-only (no document bodies) to keep this as lean as possible.
-	# Note: ChromaDB 1.5.8's $contains operator is broken; server-side tag filtering
-	# would require storing tags as individual boolean fields (schema change).
 	try:
 		result = col.get(include=["metadatas"])
 	except Exception as e:
-		return {"error": str(e)}
+		return tool_error(str(e), hint="The memory database rejected this operation. Check the arguments and retry.")
 
 	entries = [
 		_format_entry(eid, None, meta, include_content=False)
@@ -362,8 +444,15 @@ def mem_list(tags=None, limit=20, sort_by="created_at", ascending=False, scope="
 		if not tags or _matches_tags(meta, tags)
 	]
 	entries.sort(key=lambda e: e.get(sort_by, ""), reverse=not ascending)
+	total = len(entries)
 	returned = entries[:limit]
-	return {"count": len(returned), "entries": returned}
+	return {
+		"count":     len(returned),
+		"total":     total,
+		"truncated": total > len(returned),
+		"limit":     limit,
+		"entries":   returned,
+	}
 
 
 def mem_delete(entry_id, scope="global"):
@@ -381,12 +470,15 @@ def mem_delete(entry_id, scope="global"):
 
 	existing = col.get(ids=[entry_id])
 	if not existing["ids"]:
-		return {"error": f"No memory entry with id {entry_id!r}"}
+		return tool_error(
+			f"No memory entry with id {entry_id!r}",
+			hint="Use mem_list, mem_search, or mem_find to get a valid entry_id.",
+		)
 
 	try:
 		col.delete(ids=[entry_id])
 	except Exception as e:
-		return {"error": str(e)}
+		return tool_error(str(e), hint="The memory database rejected this operation. Check the arguments and retry.")
 	return {"id": entry_id, "deleted": True}
 
 
@@ -406,10 +498,14 @@ def mem_find(title=None, source=None, tags=None, limit=20, scope="global"):
 		limit:  Maximum number of entries to return (default 20).
 		scope:  'global' (default) or a project name for an isolated collection.
 
-	Returns dict with: count, entries list (no content — use mem_get for full entry).
+	Returns dict with: count (rows in this result), total (matching rows),
+	truncated, limit, entries list (no content — use mem_get for full entry).
 	"""
 	if title is None and source is None and tags is None:
-		return {"error": "Provide at least one of: title, source, tags"}
+		return tool_error(
+			"Provide at least one of: title, source, tags",
+			hint="mem_find is a metadata scan — pass a title substring, exact source URL, or tags.",
+		)
 
 	col, err = _get_collection(scope)
 	if err:
@@ -418,7 +514,7 @@ def mem_find(title=None, source=None, tags=None, limit=20, scope="global"):
 	try:
 		result = col.get(include=["metadatas"])
 	except Exception as e:
-		return {"error": str(e)}
+		return tool_error(str(e), hint="The memory database rejected this operation. Check the arguments and retry.")
 
 	title_lower = title.lower() if title else None
 
@@ -431,7 +527,13 @@ def mem_find(title=None, source=None, tags=None, limit=20, scope="global"):
 		if tags and not _matches_tags(meta, tags):
 			continue
 		entries.append(_format_entry(eid, None, meta, include_content=False))
-		if len(entries) >= limit:
-			break
 
-	return {"count": len(entries), "entries": entries}
+	total = len(entries)
+	returned = entries[:limit]
+	return {
+		"count":     len(returned),
+		"total":     total,
+		"truncated": total > len(returned),
+		"limit":     limit,
+		"entries":   returned,
+	}

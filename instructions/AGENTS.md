@@ -54,7 +54,7 @@ If the project is not indexed yet, call `index_repository` with the repo root (o
 | Ad-hoc graph questions | `query_graph` (read-only Cypher) |
 | Small Python-only repo, no index | CAIT `find_definitions` / `find_calls` |
 
-Use CAIT `read_file` when you need exact source lines (especially with `pattern` for a known file), not as a first step to map the whole codebase.
+Use CAIT `read_file` when you need exact source lines, or `search_file` to regex a known file. Neither is a first step to map the whole codebase.
 
 ### vs CAIT memory
 
@@ -128,6 +128,7 @@ search_doc(source, query="your question here", unit="paragraph")
 ```
 
 For repeated searches over the same document, `search_doc` reuses the cached markdown.
+Pass `use_cache=False` to force a fresh conversion (live HTML, updated PDFs).
 Use `strip_tables=True` when the markitdown backend produces noisy table output.
 
 If you need the raw converted text (e.g. to pass to another tool), use `convert_doc` with `save_to`:

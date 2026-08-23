@@ -7,7 +7,7 @@ data analysis where intermediate variables must survive across calls.
 """
 
 import json
-import select
+import queue
 import subprocess
 import sys
 import threading
@@ -44,13 +44,29 @@ def _get_process():
 
 
 def _send_recv(proc, request, timeout):
-	"""Send a JSON request to the worker and return the parsed response, or None on timeout/crash."""
+	"""Send a JSON request to the worker and return the parsed response, or None on timeout/crash.
+
+	Uses a reader thread instead of select() so timeouts work on Windows pipes.
+	"""
 	proc.stdin.write(request)
 	proc.stdin.flush()
-	ready, _, _ = select.select([proc.stdout], [], [], timeout)
-	if not ready:
+
+	box = queue.Queue(maxsize=1)
+
+	def _read_line():
+		try:
+			box.put(("ok", proc.stdout.readline()))
+		except Exception as exc:
+			box.put(("err", exc))
+
+	threading.Thread(target=_read_line, daemon=True).start()
+	try:
+		kind, payload = box.get(timeout=timeout)
+	except queue.Empty:
 		return None, "timeout"
-	line = proc.stdout.readline()
+	if kind == "err":
+		return None, "crash"
+	line = payload
 	if not line:
 		return None, "crash"
 	try:
@@ -82,11 +98,11 @@ def _run_request(payload, timeout):
 		proc.kill()
 		proc.wait()
 		_process = None
-		return {"error": f"Execution timed out after {timeout}s — REPL has been reset"}, True
+		return {"error": f"Execution timed out after {timeout}s — REPL has been reset", "hint": "Simplify the code, or pass a higher timeout to repl_exec."}, True
 	if failure == "crash":
 		proc.wait()
 		_process = None
-		return {"error": "REPL worker crashed unexpectedly — REPL has been reset"}, True
+		return {"error": "REPL worker crashed unexpectedly — REPL has been reset", "hint": "Re-run the last snippet. Session variables were cleared."}, True
 
 	return result, restarted
 

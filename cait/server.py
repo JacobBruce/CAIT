@@ -9,11 +9,13 @@ Run with:
 
 from typing import Annotated
 import os
+import sys
 
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from cait.fs import _DEFAULT_EXCLUDE, dir_info, file_info, file_read, file_write, file_download, fetch_url as _fetch_url
+from cait.fs import _DEFAULT_EXCLUDE, dir_info, file_info, file_read, file_search, file_write, file_download, fetch_url as _fetch_url, workspace_root
+from cait.errors import tool_error
 import cait.repl as _repl
 import cait.code as _code
 import cait.utils as _utils
@@ -33,11 +35,12 @@ def _exclude_set(exclude: list[str] | None) -> set[str]:
 mcp = FastMCP(
 	name="CAIT",
 	instructions=(
-		"Core AI Toolkit — 38 tools across 9 modules for file I/O, Python REPL, code analysis, "
+		"Core AI Toolkit — 40 tools across 9 modules for file I/O, Python REPL, code analysis, "
 		"semantic search, document tools, Wikipedia, arXiv, utilities, and persistent memory.\n\n"
 
-		"FILE SYSTEM (fs): get_file_info / get_dir_info for metadata without reading content; "
-		"read_file for bounded line reads or in-file regex search with context; "
+		"FILE SYSTEM (fs): get_file_info for one file; get_dir_info for one directory listing "
+		"(junk dirs pruned while walking, capped); "
+		"read_file for bounded line reads; search_file for in-file Python re regex (context=N for grep -C); "
 		"write_file to create/overwrite or append file text; download_file to fetch a URL to local storage; "
 		"fetch_url for HTTP GET/POST with optional save_to and convert=True for markdown conversion.\n"
 		"  convert=True omits raw HTML and returns markdown (inline text capped ~100KB; use save_to for full pages).\n\n"
@@ -46,17 +49,18 @@ mcp = FastMCP(
 		"repl_read inspects a variable without printing; repl_vars lists all user-defined variables "
 		"in the session namespace; repl_reset clears the session.\n\n"
 
-		"CODE ANALYSIS (code): find_definitions / find_calls / find_imports / find_references "
-		"perform AST-aware search that skips comments and strings — more precise than text grep.\n\n"
+		"CODE ANALYSIS (code): Python only. find_definitions / find_calls / find_imports / "
+		"find_references perform AST-aware search of .py files (skips comments and strings).\n\n"
 
 		"TEXT SEARCH (text): search_text semantically searches or summarizes a plain-text string or file "
-		"(query given → extract mode; query empty → summarize mode); encode_text returns raw 384-d embeddings; "
+		"(query given → extract mode; query empty → summarize mode); encode_text embeds with all-MiniLM-L6-v2; "
 		"text_similarity returns a cosine score (0–1); diff_text returns a unified diff of two strings or files.\n\n"
 
 		"DOCUMENT TOOLS (document): convert_doc converts PDF, DOCX, PPTX, HTML, and more to "
 		"markdown/text via Docling or MarkItDown — use save_to to write output to a file; "
 		"search_doc does the same thing as search_text but supports many document formats "
-		"by calling convert_doc first and caching the result;\n\n"
+		"by calling convert_doc first and caching the result (use_cache=False to refresh; "
+		"URL cache also expires after 24h);\n\n"
 
 		"WIKIPEDIA (wiki): wiki_search finds pages; wiki_sections lists a page's TOC; "
 		"wiki_section fetches one section's text; wiki_page returns the full page or summary_only.\n\n"
@@ -64,14 +68,14 @@ mcp = FastMCP(
 		"ARXIV (arxiv): arxiv_search queries arXiv metadata; arxiv_paper fetches a paper — "
 		"full_text=True downloads and converts the PDF; use save_to for large outputs.\n\n"
 
-		"UTILITIES (utils): get_datetime with optional IANA timezone; timer_start / timer_stop / "
-		"timer_list for wall-clock timing.\n\n"
+		"UTILITIES (utils): status for version/workspace/modules/paths; get_datetime with optional "
+		"IANA timezone; timer_start / timer_stop / timer_list for wall-clock timing.\n\n"
 
 		"MEMORY (memory): Persistent ChromaDB vector database. mem_add stores an entry (content is "
 		"embedded for semantic search); mem_search retrieves by similarity; mem_get fetches by ID; "
 		"mem_list lists entries; mem_set updates fields; mem_delete removes an entry; "
 		"mem_find is a fast metadata scan (no embedding) — useful for avoiding duplicates; "
-		"mem_edit edits content in-place (regex replace when pattern is given, or append when not). "
+		"mem_edit edits content in-place (Python re.sub when pattern is given, or append when not). "
 		"All memory tools accept scope='global' (default) or a project name for an isolated collection."
 	),
 )
@@ -90,36 +94,41 @@ def get_file_info(
 
 @mcp.tool(tags={"fs"}, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 def read_file(
-	path:         Annotated[str,  "Absolute or relative path to the file"],
-	offset:       Annotated[int,  "First line to read, 1-based (default 1)"] = 1,
-	limit:        Annotated[int | None, "Line cap. Positive: max lines from offset. Negative: last abs(limit) lines (offset ignored), e.g. -50 for a log tail. None = no line cap"] = None,
-	max_bytes:    Annotated[int,  "Hard cap on returned content size in bytes (default 256000)"] = 256_000,
-	pattern:      Annotated[str,  "Regex to search for. When set, returns matching lines plus context (grep mode) instead of a plain slice"] = "",
-	context:      Annotated[int,  "Search mode only: lines before/after each pattern match in content, like grep -C (default 2). Ignored when pattern is empty"] = 2,
-	ignore_case:  Annotated[bool, "Case-insensitive regex when pattern is set (default False)"] = False,
-	max_matches:  Annotated[int,  "Stop after this many matching lines when pattern is set (default 100)"] = 100,
+	path:      Annotated[str,  "Absolute or relative path to the file"],
+	offset:    Annotated[int,  "First line to read, 1-based (default 1)"] = 1,
+	limit:     Annotated[int | None, "Line cap. Positive: max lines from offset. Negative: last abs(limit) lines (offset ignored), e.g. -50 for a log tail. None = no line cap"] = None,
 ) -> dict:
-	"""Read a text file with a strict size budget and optional in-file regex search.
+	"""Read a text file as numbered lines (``lineno|text``).
 
-	Unlike generic editor read tools, read_file enforces max_bytes, prefixes every
-	line with its line number (``lineno|text``), and supports grep-style search via
-	*pattern* with merged context windows — useful for large logs and generated files.
+	Slice: lines[offset : offset+limit], with an internal size cap. Negative
+	limit reads the file tail (e.g. limit=-100 after append-heavy logs).
+	Use search_file to grep.
 
-	Slice mode (no pattern): lines[offset : offset+limit], capped by max_bytes.
-	Negative limit reads the file tail (e.g. limit=-100 after append-heavy logs).
-	Search mode (pattern set): merged context around each regex hit; context controls
-	grep -C window size. Optional offset/limit scopes the search window.
+	Returns path, size_bytes, truncated (byte cap hit), and has_more (lines exist
+	after this window). total_lines is included only when the read reached EOF."""
+	return file_read(path, offset=offset, limit=limit)
 
-	Returns path, mode ('slice' or 'search'), total_lines, content, and truncated flag.
-	Search mode also returns match_count and a matches list [{line, text}, ...]."""
-	return file_read(
+
+@mcp.tool(tags={"fs"}, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+def search_file(
+	path:        Annotated[str,  "Absolute or relative path to the file"],
+	pattern:     Annotated[str,  "Python re regex. Use (?i) at the start for case-insensitive"],
+	offset:      Annotated[int,  "First line to search, 1-based (default 1)"] = 1,
+	limit:       Annotated[int | None, "Line cap for the search window. Positive: max lines from offset. Negative: last abs(limit) lines (offset ignored). None = whole file"] = None,
+	context:     Annotated[int,  "grep -C: lines before/after each match in content (default 0 = matches only)"] = 0,
+	max_matches: Annotated[int,  "Stop after this many matching lines (default 100)"] = 100,
+) -> dict:
+	"""Regex-search a text file (in-file grep). Python `re` syntax. Streamed; does not slurp the file.
+
+	Returns a matches list [{line, text}, ...]. context=0 (default) is matches
+	only; context=N adds numbered grep -C bodies. Optional offset/limit scopes
+	the search (negative limit = tail). total_lines only when the pass reached EOF."""
+	return file_search(
 		path,
+		pattern,
 		offset=offset,
 		limit=limit,
-		max_bytes=max_bytes,
-		pattern=pattern or None,
 		context=context,
-		ignore_case=ignore_case,
 		max_matches=max_matches,
 	)
 
@@ -128,16 +137,23 @@ def read_file(
 def get_dir_info(
 	path: Annotated[str, "Absolute or relative path to the directory"],
 	pattern: Annotated[str, "Glob pattern to filter entries (default '*' = all)"] = "*",
-	recursive: Annotated[bool, "If True, search all subdirectories"] = False,
+	recursive: Annotated[bool, "If True, walk subdirectories (still pruned and capped)"] = False,
 	exclude: Annotated[
 		list[str] | None,
-		"Directory names to skip entirely. Defaults to [\".git\", \".venv\", \"__pycache__\", \".mypy_cache\", \".pytest_cache\", \"node_modules\"]."
+		"Directory names to skip descending into (matched relative to path, not ancestors). See status.default_exclude for default junk dirs. Pass [] to skip nothing."
 	] = None,
+	max_results: Annotated[int, "Cap on returned entries (default 100, hard max 2000)"] = 100,
 ) -> dict:
-	"""List directory contents with metadata for each entry.
-	Returns size, line count, permissions, and timestamps per file.
-	Does not read file content."""
-	return dir_info(path, pattern=pattern, recursive=recursive, exclude=_exclude_set(exclude))
+	"""List one directory (optional glob / recursion). Junk dirs are pruned while walking.
+	Returns size, permissions, and timestamps per entry — not line counts.
+	Does not read file content. Use a host glob/grep tool to search a whole tree."""
+	return dir_info(
+		path,
+		pattern=pattern,
+		recursive=recursive,
+		exclude=_exclude_set(exclude),
+		max_results=max_results,
+	)
 
 
 @mcp.tool(tags={"fs"}, annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=False))
@@ -152,7 +168,7 @@ def write_file(
 	Default mode='replace' creates or overwrites the file (parent dirs are created).
 	Use mode='append' for NOTES.md, TASKS.md, log files, etc. (file must already exist).
 
-	Returns the path, mode, characters written, and the new total line count."""
+	Returns the path, mode, and characters written."""
 	return file_write(path, text, mode=mode, newline=newline)
 
 
@@ -164,9 +180,9 @@ def download_file(
 ) -> dict:
 	"""Download a file from a URL to local storage.
 
-	Returns the local path, filename, and file size. Useful before passing a file
-	to other tools (e.g. search_doc, diff_text) without loading its content
-	through the context window."""
+	Returns the local path, filename, and file size. 30s timeout, CAIT User-Agent,
+	100 MB size cap. Useful before passing a file to other tools (e.g. search_doc,
+	diff_text) without loading its content through the context window."""
 	return file_download(url, filename=filename or None, dirpath=dirpath or None)
 
 
@@ -185,7 +201,8 @@ def fetch_url(
 	Use save_to to write large responses (e.g. HTML pages, API results) to a file
 	and avoid flooding the context window. Combine with convert=True to get clean
 	markdown from HTML pages via MarkItDown/Docling (raw HTML is not returned when
-	conversion succeeds). Inline content/markdown is capped at ~100KB.
+	conversion succeeds). 30s timeout, CAIT User-Agent, 20 MB body cap.
+	Inline content/markdown is capped at ~100KB.
 
 	Returns: url, status_code, content_type, size_bytes.
 	Plus 'content' unless save_to is given or convert succeeds.
@@ -248,97 +265,105 @@ def repl_reset() -> dict:
 # ── AST code search ──────────────────────────────────────────────────────────
 
 _EXCLUDE_HINT = (
-	"Directory names to skip entirely. "
-	"Defaults to [\".git\", \".venv\", \"__pycache__\", \".mypy_cache\", \".pytest_cache\", \"node_modules\"]."
+	"Directory names to skip entirely. See status.default_exclude for default junk dirs. "
+	"Pass [] to skip nothing."
 )
 
 @mcp.tool(tags={"code"}, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 def find_definitions(
 	name:      Annotated[str,       "Symbol name to find definitions of (function, class, or variable)"],
-	path:      Annotated[str,       "File or directory to search. Defaults to cwd if omitted"] = "",
+	path:      Annotated[str,       "Python file (.py) or directory to search. Defaults to CAIT_WORKSPACE (else cwd) if omitted"] = "",
 	kind:      Annotated[str,       "Restrict to 'function', 'class', or 'variable'. Leave blank for all"] = "",
 	recursive: Annotated[bool,      "Descend into subdirectories (default True)"] = True,
 	exclude:   Annotated[list[str] | None, _EXCLUDE_HINT] = None,
+	max_results: Annotated[int,     "Cap on returned hits (default 200, hard max 2000)"] = 200,
 ) -> dict:
 	"""Find all definitions of a symbol (function, class, or variable) in Python source files.
 
+	Python only — searches `.py` files. Does not parse other languages.
 	Returns file path, line, column, source line, kind, and docstring for each match.
-	Classes also include their base classes. Annotated variables include their type annotation."""
-	return {
-		"results": _code.find_definitions(
-			name,
-			path=path or None,
-			kind=kind or None,
-			recursive=recursive,
-			exclude=_exclude_set(exclude),
-		),
-	}
+	Classes also include their base classes. Annotated variables include their type annotation.
+	Capped; check truncated if the result set may be incomplete."""
+	return _code.find_definitions(
+		name,
+		path=path or None,
+		kind=kind or None,
+		recursive=recursive,
+		exclude=_exclude_set(exclude),
+		max_results=max_results,
+	)
 
 
 @mcp.tool(tags={"code"}, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 def find_calls(
 	name:      Annotated[str,       "Function name to find call sites of"],
-	path:      Annotated[str,       "File or directory to search. Defaults to cwd if omitted"] = "",
+	path:      Annotated[str,       "Python file (.py) or directory to search. Defaults to CAIT_WORKSPACE (else cwd) if omitted"] = "",
 	recursive: Annotated[bool,      "Descend into subdirectories (default True)"] = True,
 	exclude:   Annotated[list[str] | None, _EXCLUDE_HINT] = None,
+	max_results: Annotated[int,     "Cap on returned hits (default 200, hard max 2000)"] = 200,
 ) -> dict:
 	"""Find all call sites of a function in Python source files.
 
+	Python only — searches `.py` files. Does not parse other languages.
 	Matches bare calls (`name(...)`), method calls (`obj.name(...)`), and chained calls.
 	Skips occurrences in comments and strings — unlike grep.
-	Returns file, line, column, source line, call style, and the receiver object for attribute calls."""
-	return {
-		"results": _code.find_calls(
-			name,
-			path=path or None,
-			recursive=recursive,
-			exclude=_exclude_set(exclude),
-		),
-	}
+	Returns file, line, column, source line, call style, and the receiver object for attribute calls.
+	Capped; check truncated if the result set may be incomplete."""
+	return _code.find_calls(
+		name,
+		path=path or None,
+		recursive=recursive,
+		exclude=_exclude_set(exclude),
+		max_results=max_results,
+	)
 
 
 @mcp.tool(tags={"code"}, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 def find_imports(
 	module:    Annotated[str,       "Module name to search for (e.g. 'os', 'os.path', 'pandas')"],
-	path:      Annotated[str,       "File or directory to search. Defaults to cwd if omitted"] = "",
+	path:      Annotated[str,       "Python file (.py) or directory to search. Defaults to CAIT_WORKSPACE (else cwd) if omitted"] = "",
 	recursive: Annotated[bool,      "Descend into subdirectories (default True)"] = True,
 	exclude:   Annotated[list[str] | None, _EXCLUDE_HINT] = None,
+	max_results: Annotated[int,     "Cap on returned hits (default 200, hard max 2000)"] = 200,
 ) -> dict:
-	"""Find all files that import a given module or name from it.
+	"""Find all Python files that import a given module or name from it.
 
+	Python only — searches `.py` files. Does not parse other languages.
 	Matches `import module`, `import module.submodule`, `from module import ...`,
 	and `from package import module`. Returns file, line, import style, module name,
-	and the names imported (for from-imports)."""
-	return {
-		"results": _code.find_imports(
-			module,
-			path=path or None,
-			recursive=recursive,
-			exclude=_exclude_set(exclude),
-		),
-	}
+	and the names imported (for from-imports).
+	Capped; check truncated if the result set may be incomplete."""
+	return _code.find_imports(
+		module,
+		path=path or None,
+		recursive=recursive,
+		exclude=_exclude_set(exclude),
+		max_results=max_results,
+	)
 
 
 @mcp.tool(tags={"code"}, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 def find_references(
 	name:      Annotated[str,       "Identifier name to find all usages of"],
-	path:      Annotated[str,       "File or directory to search. Defaults to cwd if omitted"] = "",
+	path:      Annotated[str,       "Python file (.py) or directory to search. Defaults to CAIT_WORKSPACE (else cwd) if omitted"] = "",
 	recursive: Annotated[bool,      "Descend into subdirectories (default True)"] = True,
 	exclude:   Annotated[list[str] | None, _EXCLUDE_HINT] = None,
+	max_results: Annotated[int,     "Cap on returned hits (default 200, hard max 2000)"] = 200,
 ) -> dict:
 	"""Find all uses of an identifier in Python source files.
 
-	Broader than find_calls — includes variable loads, stores, deletes, and attribute accesses.
-	Use for tracking all usages of a variable, class name, or imported symbol.
-	Note: very common names may return many results."""
-	return {
-		"results": _code.find_references(
-			name,
-			path=path or None,
-			recursive=recursive,
-			exclude=_exclude_set(exclude),
-		),
-	}
+	Python only — searches `.py` files. Does not parse other languages.
+	Broader than find_calls — includes variable loads, stores, deletes, attribute
+	accesses, and import aliases (`from x import name`). Use for tracking all
+	usages of a variable, class name, or imported symbol.
+	Capped; check truncated if the result set may be incomplete."""
+	return _code.find_references(
+		name,
+		path=path or None,
+		recursive=recursive,
+		exclude=_exclude_set(exclude),
+		max_results=max_results,
+	)
 
 
 # ── Wikipedia ────────────────────────────────────────────────────────────────
@@ -394,6 +419,17 @@ def wiki_page(
 # ── Datetime & timers ────────────────────────────────────────────────────────
 
 @mcp.tool(tags={"utils"}, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+def status() -> dict:
+	"""Runtime snapshot: toolkit name, versions, Python, workspace, enabled modules,
+	memory/files paths, cache path, and default junk-dir excludes.
+
+	No arguments. Use this first when diagnosing path or environment issues,
+	or to see which directories get_dir_info / find_* skip by default.
+	Hosts that prefix MCP tools (like AI UI) expose this as cait_status."""
+	return _utils.status()
+
+
+@mcp.tool(tags={"utils"}, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 def get_datetime(
 	timezone: Annotated[str, "IANA timezone name (e.g. 'America/New_York', 'UTC'). Defaults to system local timezone."] = "",
 ) -> dict:
@@ -430,14 +466,14 @@ def timer_list() -> dict:
 
 @mcp.tool(tags={"text"}, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 def encode_text(
-	texts: Annotated[list[str], "One or more strings to embed. Each element may be a file path — if it exists, the file contents are embedded instead."],
+	texts:   Annotated[list[str], "One or more strings to embed. Each element may be a file path — if it exists, the file contents are embedded instead."],
+	save_to: Annotated[str,  "If given, write the 384-d vectors as JSON to this path instead of returning them inline."] = "",
 ) -> dict:
 	"""Embed texts using all-MiniLM-L6-v2 (the same model used by the memory DB).
 
-	Returns 384-dimensional float vectors, one per input. Each element may be
-	a file path — if it exists on disk, its contents are read and embedded.
-	Useful for computing custom similarity scores or inspecting the embedding space."""
-	return _text.encode_text(texts)
+	Returns 384-dimensional float vectors, one per input. Use save_to to write
+	them as JSON and omit them from the response. Each input may be a file path."""
+	return _text.encode_text(texts, save_to=save_to)
 
 
 @mcp.tool(tags={"text"}, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
@@ -448,8 +484,9 @@ def text_similarity(
 	"""Compute the semantic similarity between two texts (cosine similarity, 0–1).
 
 	1.0 = identical meaning, 0.0 = completely unrelated. Each argument may be
-	a file path — if it exists on disk, its contents are used.
-	Uses the all-MiniLM-L6-v2 embedding model."""
+	a file path — if it looks like a path and exists on disk, its contents are used.
+	Bare tokens such as "a" are treated as literal text even if a file with that
+	name exists. Uses the all-MiniLM-L6-v2 embedding model."""
 	return _text.text_similarity(a, b)
 
 
@@ -483,8 +520,9 @@ def diff_text(
 ) -> dict:
 	"""Return a unified diff between two strings or files.
 
-	Each argument may be a file path — if it exists on disk, its contents are
-	read and used. Returns the diff string plus counts of added and removed lines."""
+	Each argument may be a file path (separator, ./, ~/, or a file suffix). Bare
+	tokens are literal text even if a same-named file exists. Returns the diff
+	string plus counts of added and removed lines."""
 	return _text.diff_text(a, b, context=context, label_a=label_a, label_b=label_b)
 
 
@@ -577,7 +615,7 @@ def mem_set(
 @mcp.tool(tags={"memory"}, annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=False))
 def mem_edit(
 	entry_id:    Annotated[str, "ID of the memory entry to edit"],
-	pattern:     Annotated[str, "Regex pattern to find within the content. Leave empty to use append mode instead."] = "",
+	pattern:     Annotated[str, "Python re regex to find within the content. Leave empty to use append mode instead."] = "",
 	text:        Annotated[str, "Replacement string for regex mode (default empty = delete matches). Appends text when pattern is empty."] = "",
 	scope:       Annotated[str, _SCOPE_HINT] = "global",
 ) -> dict:
@@ -585,7 +623,7 @@ def mem_edit(
 
 	Two modes:
 	  - Regex replace: provide pattern (and optionally replacement text).
-	    Applies re.sub(pattern, text, content) and re-embeds the result.
+	    Applies Python re.sub(pattern, text, content) and re-embeds the result.
 	  - Append: provide text with no pattern. Appends to the existing
 	    content with a newline separator if needed.
 
@@ -609,7 +647,8 @@ def mem_search(
 	"""Search memory by semantic similarity.
 
 	Returns entries whose content is most similar to the query, ranked by cosine
-	similarity score (0–1). Optionally filter by tags before ranking."""
+	similarity score (0–1). Tag filters are applied before ranking. Results
+	include a snippet, not the full note — use mem_get for the full entry."""
 	return _mem.mem_search(query, limit=limit, tags=tags or None, scope=scope)
 
 
@@ -632,7 +671,9 @@ def mem_list(
 ) -> dict:
 	"""List memory entries sorted by date, newest first by default.
 
-	Content is omitted for brevity — use mem_get() to fetch the full content of an entry."""
+	Content is omitted. ``count`` is rows in this result; ``total`` is matching
+	rows (after tag filter); ``truncated`` is True when total > count.
+	Use mem_get() to fetch the full content of an entry."""
 	return _mem.mem_list(tags=tags or None, limit=limit, sort_by=sort_by, ascending=ascending, scope=scope)
 
 
@@ -674,7 +715,7 @@ def mem_find(
 @mcp.tool(tags={"document"}, annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=True))
 def convert_doc(
 	source:        Annotated[str,  "File path or URL to convert"],
-	backend:       Annotated[str,  "Backend to use: 'docling', 'markitdown', or 'auto' (default — tries docling, falls back to markitdown)"] = "auto",
+	backend:       Annotated[str,  "Backend to use: 'docling', 'markitdown', or 'auto' (default — tries Docling, falls back to MarkItDown)"] = "auto",
 	output_format: Annotated[str,  "Output format: 'markdown' (default), 'html', or 'text'. Only applies to the docling backend."] = "markdown",
 	rich_pdf:      Annotated[bool, "Enable Docling PDF enrichment (code detection, formula extraction, picture description). Slower. Docling only."] = False,
 	strip_tables:  Annotated[bool, "Remove markdown table syntax from the output. Useful when markitdown renders PDF equations as unreadable pipe-delimited tables."] = False,
@@ -705,8 +746,12 @@ def convert_doc(
 			strip_tables=strip_tables,
 			save_to=save_to,
 		)
-	except (ValueError, RuntimeError) as e:
-		return {"error": str(e), "source": source}
+	except Exception as e:
+		return tool_error(
+			str(e),
+			hint="Check the path/URL and that a conversion backend is installed.",
+			source=source,
+		)
 	if isinstance(result, dict) and "content" in result and not save_to:
 		from cait.fs import cap_inline_text
 		text, trunc_meta = cap_inline_text(result["content"])
@@ -724,13 +769,16 @@ def search_doc(
 	query:        Annotated[str,  "Question or topic to search for. Leave empty for a document overview summary."] = "",
 	sentences:    Annotated[int,  "Number of chunks to return (default 5)"] = 5,
 	unit:         Annotated[str,  "Chunking granularity: 'sentence' (default) or 'paragraph'. Use 'paragraph' for academic PDFs and technical reports."] = "sentence",
-	backend:      Annotated[str,  "Conversion backend: 'auto' (default), 'docling', or 'markitdown'"] = "auto",
+	backend:      Annotated[str,  "Conversion backend: 'auto' (default — tries Docling, then MarkItDown), 'docling', or 'markitdown'"] = "auto",
 	strip_tables: Annotated[bool, "Strip markdown table syntax before searching. Recommended when markitdown renders PDFs with heavy table content."] = False,
+	use_cache:    Annotated[bool, "Reuse a cached conversion if available (default True). Set False to reconvert and refresh the cache — useful for live HTML or a changed remote file."] = True,
 ) -> dict:
 	"""Semantically search or summarize a document from a file path or URL.
 
 	Handles the full pipeline: convert → cache → search. Repeat calls with the
 	same source reuse the cached markdown — no re-download or re-conversion.
+	Pass use_cache=False to skip the cache, reconvert, and overwrite the entry.
+	URL cache entries also expire after 24 hours.
 
 	Plain text files (.txt, .md, .rst) are read directly without conversion.
 	All other formats (PDF, DOCX, HTML, URLs, …) go through convert_doc.
@@ -747,6 +795,7 @@ def search_doc(
 		unit=unit,
 		backend=backend,
 		strip_tables=strip_tables,
+		use_cache=use_cache,
 	)
 
 
@@ -758,6 +807,12 @@ def search_doc(
 _disabled = {m.strip().lower() for m in os.environ.get("CAIT_DISABLE", "").split(",") if m.strip()}
 if _disabled:
 	mcp.disable(tags=_disabled)
+
+try:
+	_ws = workspace_root()
+	print(f"CAIT workspace: {_ws}", file=sys.stderr)
+except Exception:
+	pass
 
 
 if __name__ == "__main__":

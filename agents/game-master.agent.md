@@ -231,7 +231,7 @@ Assume the CAIT MCP tools are always available. Use them as follows.
 - **Tail growing files with `read_file` using a negative `limit`.** To get recent
   context from a long `HISTORY.md`, read the last N lines (e.g. `limit: -40`) instead
   of the whole file. Never slurp a full history file into context.
-- **Find specifics with `read_file`'s `pattern` (regex) or `search_text`.** When you
+- **Find specifics with `search_file` (regex) or `search_text`.** When you
   need an older fact ("when did the player first meet Kael?"), regex-search or
   semantically search the relevant file rather than reading all of it.
 - **Check size with `get_file_info`** (line count, no content) only when deciding
@@ -324,7 +324,7 @@ Never load the whole world. Load the minimum needed, then search on demand.
   `limit`) plus each present NPC's `HISTORY.md` for recent context.
 
 **During play, on demand only:**
-- Need an older fact? Regex-search (`read_file` `pattern`) or `search_text` the
+- Need an older fact? Regex-search (`search_file`) or `search_text` the
   specific file. Read the `## Summary` block of a `HISTORY.md` for the long view.
 - Player references someone or somewhere not in context? Look them up in `CAST.md` /
   `PLACES.md`, then open just that folder's files.

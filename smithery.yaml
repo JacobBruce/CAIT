@@ -1,12 +1,29 @@
+# How Smithery launches this MCP server (stdio).
+# PYTHONPATH must be the CAIT repo root (the directory that contains cait/),
+# not a venv path. The interpreter is a separate setting.
+
 startCommand:
   type: stdio
   configSchema:
     type: object
-    required:
-      - pythonEnvPath
     properties:
-      pythonEnvPath:
+      pythonExecutable:
         type: string
-        description: Absolute path to the Python environment.
+        default: python3
+        description: >
+          Python 3.11+ interpreter with CAIT dependencies installed
+          (e.g. /path/to/CAIT/.venv/bin/python). Not a venv directory.
+      packageRoot:
+        type: string
+        description: >
+          Directory that contains the cait/ package (the CAIT repo root).
+          Defaults to the process working directory. Do not set this to a
+          .venv path, that belongs in pythonExecutable.
   commandFunction: |-
-    (config) => ({ command: 'python', args: ['cait/server.py'], env: { PYTHONPATH: config.pythonEnvPath } })
+    (config) => ({
+      command: config.pythonExecutable || 'python3',
+      args: ['-m', 'cait.server'],
+      env: { PYTHONPATH: config.packageRoot || '.' }
+    })
+  exampleConfig:
+    pythonExecutable: python3

@@ -1,9 +1,9 @@
 <!-- mcp-name: io.github.JacobBruce/CAIT -->
 # CAIT - Core AI Toolkit
 
-A modular [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that extends AI assistants with practical capabilities: file I/O, a persistent Python REPL, AST-aware code analysis, semantic text search, document conversion, Wikipedia & arXiv tools, a persistent vector memory database, and other general utilities.
+A modular [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that extends AI assistants with practical capabilities: file I/O, a persistent Python REPL, Python AST-aware code search, semantic text search, document conversion, Wikipedia & arXiv tools, a persistent vector memory database, and other general utilities.
 
-A total of **38 tools across 9 modules**. Each module can be disabled independently via the `CAIT_DISABLE` environment variable. Made by AI for AI.
+A total of **40 tools across 9 modules**. Each module can be disabled independently via the `CAIT_DISABLE` environment variable. Made by AI for AI.
 
 ## Requirements
 
@@ -61,7 +61,14 @@ To use the agent instructions, rename [AGENTS.md](instructions/AGENTS.md) and pl
 |----------|---------|-------------|
 | `CAIT_FILES_PATH` | `~/.cait/files/` | Directory for downloaded files and document conversion cache |
 | `CAIT_MEMORY_PATH` | `~/.cait/memory` | ChromaDB storage for the persistent memory database |
+| `CAIT_WORKSPACE` | process cwd | Host-supplied project folder. Relative paths (`README.md`, omitted `find_*` path) resolve here, not against MCP `cwd`. |
 | `CAIT_DISABLE` | _(empty)_ | Comma-separated module names to exclude at startup (e.g. `wiki,arxiv`) |
+
+Keep MCP `cwd` / `PYTHONPATH` pointing at the **CAIT install**. Set `CAIT_WORKSPACE` to the repo you are editing. Hosts that interpolate `${workspaceFolder}` (Cursor, VS Code Copilot, AI UI) use this one-time env line:
+
+```json
+"CAIT_WORKSPACE": "${workspaceFolder}"
+```
 
 ## Client Configuration
 
@@ -76,7 +83,11 @@ Add to your workspace `.vscode/mcp.json` or user `settings.json`:
       "type": "stdio",
       "command": "/absolute/path/to/.venv/bin/python",
       "args": ["-m", "cait.server"],
-      "cwd": "/absolute/path/to/CAIT"
+      "cwd": "/absolute/path/to/CAIT",
+      "env": {
+        "PYTHONPATH": "/absolute/path/to/CAIT",
+        "CAIT_WORKSPACE": "${workspaceFolder}"
+      }
     }
   }
 }
@@ -100,7 +111,8 @@ Edit `claude_desktop_config.json`:
       "command": "/absolute/path/to/.venv/bin/python",
       "args": ["-m", "cait.server"],
       "env": {
-        "PYTHONPATH": "/absolute/path/to/CAIT"
+        "PYTHONPATH": "/absolute/path/to/CAIT",
+        "CAIT_WORKSPACE": "/absolute/path/to/your/project"
       }
     }
   }
@@ -111,6 +123,7 @@ Edit `claude_desktop_config.json`:
 
 ```bash
 claude mcp add cait -e PYTHONPATH=/absolute/path/to/CAIT \
+  -e CAIT_WORKSPACE=/absolute/path/to/your/project \
   -- /absolute/path/to/.venv/bin/python -m cait.server
 ```
 
@@ -128,16 +141,21 @@ Add to your user `~/.cursor/mcp.json` (or project `.cursor/mcp.json`):
       "args": ["-m", "cait.server"],
       "cwd": "/absolute/path/to/CAIT",
       "env": {
-        "PYTHONPATH": "/absolute/path/to/CAIT"
+        "PYTHONPATH": "/absolute/path/to/CAIT",
+        "CAIT_WORKSPACE": "${workspaceFolder}"
       }
     }
   }
 }
 ```
 
-**`PYTHONPATH` must point at the CAIT repo root** (the directory that contains the `cait/` package). Cursor does not always honor `cwd` for MCP subprocesses, so `PYTHONPATH` is required for `python -m cait.server` to resolve.
+**`PYTHONPATH` must point at the CAIT repo root** (the directory that contains the `cait/` package), not a `.venv` path. The MCP `command` is the interpreter (`…/.venv/bin/python`); `PYTHONPATH` is where `import cait` is resolved. Cursor does not always honor `cwd` for MCP subprocesses, so `PYTHONPATH` is required for `python -m cait.server` to resolve.
 
 Add [AGENTS.md](instructions/AGENTS.md) as a user or project rule (Settings → Rules, Skills, Subagents), or copy it to `AGENTS.md` in the project root.
+
+### AI UI
+
+Same env line in `~/.aiui/mcp.json`. AI UI expands `${workspaceFolder}` at spawn (open project, or `~/.aiui` on Home). Keep `cwd` as the CAIT install.
 
 ## Recommended MCP Servers
 
@@ -160,11 +178,12 @@ Add [AGENTS.md](instructions/AGENTS.md) as a user or project rule (Settings → 
 | Tool | Description |
 |------|-------------|
 | `get_file_info` | Metadata for a single file: size, line count, permissions, timestamps. Does not read content. |
-| `get_dir_info` | Directory listing with per-entry metadata. Supports glob patterns and recursion. |
-| `read_file` | Read a text file with a `max_bytes` cap and `lineno\|text` prefixes. Slice mode: `offset` + `limit` (negative `limit` = tail, e.g. `-50`). Search mode: `pattern` with `context` lines around hits (in-file grep). |
+| `get_dir_info` | One-directory listing (size, permissions, timestamps). Prunes junk dirs while walking; `max_results` default 100. Not a file finder. |
+| `read_file` | Stream a text file (does not slurp it). `lineno\|text` prefixes. `offset` + `limit` (negative `limit` = tail, e.g. `-50`). `has_more` if later lines exist; `truncated` only if the byte cap cut the payload. `total_lines` only when the pass reached EOF. |
+| `search_file` | In-file regex grep. Returns match lines; `context=N` adds grep `-C` bodies (`(?i)` for case-insensitive). Optional `offset`/`limit` scopes the window. |
 | `write_file` | Write text to a file. `mode='replace'` (default) creates/overwrites; `mode='append'` adds to an existing file (NOTES.md, TASKS.md, logs). |
-| `download_file` | Download a URL to `~/.cait/files/` (or `CAIT_FILES_PATH`). Returns the local path. |
-| `fetch_url` | HTTP GET/POST with custom headers and body. Use `save_to` for large pages. `convert=True` returns markdown and omits raw HTML (inline text capped ~100KB). |
+| `download_file` | Download a URL to `~/.cait/files/` (or `CAIT_FILES_PATH`). 30s timeout, User-Agent set, 100 MB cap. |
+| `fetch_url` | HTTP GET/POST with timeout, User-Agent, and a 20 MB body cap. Use `save_to` for large pages. `convert=True` returns markdown and omits raw HTML (inline text capped ~100KB). |
 
 ### Persistent Python REPL — `repl`
 
@@ -179,14 +198,14 @@ Add [AGENTS.md](instructions/AGENTS.md) as a user or project rule (Settings → 
 
 ### Code Analysis — `code`
 
-All code tools perform **AST-aware** search — they skip occurrences in comments and strings, unlike text grep.
+**Python only.** These tools parse `.py` files with the `ast` module. They skip comments and strings (unlike text grep) and do **not** search C, C++, JavaScript, or other languages.
 
 | Tool | Description |
 |------|-------------|
-| `find_definitions` | Find all definitions of a function, class, or variable. Returns file, line, docstring, and kind. |
-| `find_calls` | Find all call sites of a function. Matches bare calls, method calls, and chained calls. |
-| `find_imports` | Find all files that import a given module or name. |
-| `find_references` | Find all uses of an identifier (loads, stores, deletes, attribute accesses). |
+| `find_definitions` | Find definitions of a function, class, or variable in Python (including tuple unpack). Capped at 200 hits. |
+| `find_calls` | Find call sites of a Python function. Matches bare calls, method calls, and chained calls. Capped at 200 hits. |
+| `find_imports` | Find Python files that import a given module or name. Capped at 200 hits. |
+| `find_references` | Find uses of a Python identifier (loads, stores, deletes, attribute accesses, import aliases). Capped at 200 hits. |
 
 ### Text Search & Embeddings — `text`
 
@@ -195,7 +214,7 @@ Uses `all-MiniLM-L6-v2` (bundled with ChromaDB — no separate download). Chunk 
 | Tool | Description |
 |------|-------------|
 | `search_text` | Semantically search or summarize a text string or plain text file (`.txt`, `.md`, `.rst`). Query given → extract mode (most relevant chunks). Query empty → summarize mode (most representative chunks). |
-| `encode_text` | Return raw 384-dimensional float embeddings for one or more strings or files. |
+| `encode_text` | Return 384-d embeddings for one or more strings or files. Use `save_to` to write JSON and omit the vectors from the response. |
 | `text_similarity` | Cosine similarity between two texts (0–1). |
 | `diff_text` | Unified diff between two strings or files. Returns diff text plus added/removed line counts. |
 
@@ -203,8 +222,8 @@ Uses `all-MiniLM-L6-v2` (bundled with ChromaDB — no separate download). Chunk 
 
 | Tool | Description |
 |------|-------------|
-| `convert_doc` | Convert PDF, DOCX, PPTX, XLSX, HTML, LaTeX, images, audio, and more to markdown or plain text. Backends: `docling` (higher quality, layout-aware), `markitdown` (lighter, better for Office files), `auto` (tries docling, falls back to markitdown). Use `save_to` to write large outputs to a file. `strip_tables=True` removes noisy pipe-table syntax. `rich_pdf=True` enables Docling's code detection and formula extraction (slower). |
-| `search_doc` | Same as `search_text` but handles many document formats (PDF, DOCX, HTML, URLs). Converts via `convert_doc` on first call and caches the result — repeat calls are instant. |
+| `convert_doc` | Convert PDF, DOCX, PPTX, XLSX, HTML, LaTeX, images, audio, and more to markdown or plain text. Backends: `docling` (higher quality, layout-aware, OCR on scans), `markitdown` (lighter, better for Office files), `auto` (tries Docling, falls back to MarkItDown). Use `save_to` to write large outputs to a file. `strip_tables=True` removes noisy pipe-table syntax. `rich_pdf=True` enables Docling's code detection and formula extraction (slower). |
+| `search_doc` | Same as `search_text` but handles many document formats (PDF, DOCX, HTML, URLs). Converts via `convert_doc` on first call and caches the result. Pass `use_cache=False` to reconvert and refresh the cache. URL entries also expire after 24 hours. |
 
 ### Wikipedia — `wiki`
 
@@ -226,6 +245,7 @@ Uses `all-MiniLM-L6-v2` (bundled with ChromaDB — no separate download). Chunk 
 
 | Tool | Description |
 |------|-------------|
+| `status` | Runtime snapshot: name, versions (CAIT, FastMCP, MCP protocol), Python, workspace vs cwd, enabled modules, memory/files paths, `cache_path`, `default_exclude`. No arguments. |
 | `get_datetime` | Current date, time, timezone, UTC offset, weekday, and Unix timestamp. Accepts any IANA timezone name. |
 | `timer_start` | Start a named wall-clock timer. |
 | `timer_stop` | Stop a timer and return elapsed seconds. |
@@ -238,9 +258,9 @@ Persistent ChromaDB vector store at `~/.cait/memory` (override with `CAIT_MEMORY
 | Tool | Description |
 |------|-------------|
 | `mem_add` | Add a new entry. Fields: `title`, `content` (embedded), `tags`, `description`, `source`, `entry_id`. |
-| `mem_search` | Find entries by semantic similarity to a query. Optionally filter by tags. |
+| `mem_search` | Find entries by semantic similarity. Tag filters apply before ranking. Returns a snippet; use `mem_get` for the full note. |
 | `mem_get` | Retrieve a full entry by ID. |
-| `mem_list` | List entries sorted by date (newest first). Content omitted for brevity. |
+| `mem_list` | List entries sorted by date (newest first). `count` is rows returned; `total` is matching rows. Content omitted. |
 | `mem_set` | Update fields of an existing entry. Only non-empty values are applied. |
 | `mem_edit` | Edits content in-place — regex replace when pattern is given, or append when not. |
 | `mem_delete` | Permanently delete an entry by ID. |

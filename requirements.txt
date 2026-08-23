@@ -1,6 +1,7 @@
 # Core (required)
 fastmcp>=3.0
 chromadb>=0.5
+numpy>=2.4.0
 
 # Research & HTTP helpers
 wikipedia-api>=0.8

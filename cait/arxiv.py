@@ -6,8 +6,9 @@ PDFs to markdown when full_text is requested.
 """
 
 from functools import lru_cache
-from cait.fs import _DEFAULT_FILEDIR
+from cait.fs import _DEFAULT_FILEDIR, resolve_path
 from cait.wiki import _USER_AGENT
+from cait.errors import tool_error
 
 import arxiv as _arxiv
 
@@ -64,7 +65,10 @@ def arxiv_search(query, limit=10, sort_by="relevance"):
 	try:
 		results = [_fmt_result(r) for r in _client().results(search)]
 	except Exception as e:
-		return {"error": str(e)}
+		return tool_error(
+			str(e),
+			hint="Check the query syntax (ti:, au:, abs:, AND/OR). Retry if this was a network error.",
+		)
 
 	return {
 		"query":   query,
@@ -97,10 +101,13 @@ def arxiv_paper(paper_id, full_text=False, save_to=""):
 	try:
 		result = next(_client().results(search), None)
 	except Exception as e:
-		return {"error": str(e)}
+		return tool_error(str(e), hint="Check the paper id (e.g. '1706.03762') and retry.")
 
 	if result is None:
-		return {"error": f"No paper found with id '{paper_id}'"}
+		return tool_error(
+			f"No paper found with id '{paper_id}'",
+			hint="Use arxiv_search to find the id, or drop a version suffix like v5.",
+		)
 
 	meta = _fmt_result(result)
 
@@ -133,16 +140,18 @@ def arxiv_paper(paper_id, full_text=False, save_to=""):
 		]
 		markdown = "\n".join(lines)
 		if save_to:
-			from pathlib import Path
-			p = Path(save_to)
+			p = resolve_path(save_to)
 			p.parent.mkdir(parents=True, exist_ok=True)
 			p.write_text(markdown, encoding="utf-8")
-			return {**meta, "saved_to": str(p.resolve()), "size_bytes": p.stat().st_size}
+			return {**meta, "saved_to": str(p), "size_bytes": p.stat().st_size}
 		return {**meta, "markdown": markdown}
 
 	# full_text=True: download PDF then convert via cait.document
 	if not meta["pdf_url"]:
-		return {"error": f"No PDF URL available for paper '{paper_id}'"}
+		return tool_error(
+			f"No PDF URL available for paper '{paper_id}'",
+			hint="Try full_text=False for the abstract, or open the arXiv HTML page.",
+		)
 
 	try:
 		import urllib.request
@@ -156,6 +165,12 @@ def arxiv_paper(paper_id, full_text=False, save_to=""):
 			local_pdf.write_bytes(resp.read())
 
 		conv = convert_doc(str(local_pdf), save_to=save_to)
+		if "error" in conv:
+			return tool_error(
+				conv["error"],
+				hint=conv.get("hint") or "PDF downloaded but conversion failed. Try save_to with convert_doc separately.",
+				pdf_path=str(local_pdf),
+			)
 		if save_to:
 			return {**meta, "pdf_path": str(local_pdf), "saved_to": conv["saved_to"], "size_bytes": conv["size_bytes"]}
 		from cait.fs import cap_inline_text
@@ -167,4 +182,7 @@ def arxiv_paper(paper_id, full_text=False, save_to=""):
 			out["max_bytes"] = trunc_meta["max_bytes"]
 		return out
 	except Exception as e:
-		return {"error": f"PDF conversion failed: {e}"}
+		return tool_error(
+			f"PDF conversion failed: {e}",
+			hint="Retry, or fetch with full_text=False then convert_doc on a downloaded PDF.",
+		)

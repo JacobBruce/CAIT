@@ -40,9 +40,11 @@ argument-hint: "Optional: project name for codebase-memory index, or 'refresh' t
 3. `get_graph_schema` — only if edge types or node labels are unclear.
 4. `search_graph` — locate entry points (`main`, `if __name__`, `FastMCP`, `IMPLEMENT_APP`, `wxIMPLEMENT_APP`, CLI `typer`, etc.).
 
+**Note**: If the codebase-memory-mcp tools are unavailable you can proceed with the project survey using the available tools.
+
 ### Step 2 — Config and docs (CAIT fs)
 
-5. `get_dir_info` on the project root — top-level layout only; no deep recursion.
+5. `get_dir_info` on the project root — top-level layout only; no deep recursion (capped; junk dirs pruned). Use the host `glob_files` / `grep_files` tools to search a whole tree.
 6. `read_file` — README and the primary build manifest (first ~200 lines):
    - Python: `pyproject.toml`, `setup.py`, `requirements.txt`
    - C/C++: `CMakeLists.txt`, `Makefile`, `meson.build`
@@ -124,7 +126,7 @@ index_project: <codebase-memory project name or none>
 
 ## Rules
 
-- **Do not** read entire large files — use `get_file_info` and targeted `read_file` slices or `pattern` search.
+- **Do not** read entire large files — use `get_file_info`, targeted `read_file` slices, or `search_file`.
 - **Do not** duplicate `PLAN.md` / `TASKS.md` content — link and summarize.
 - **Do not** store the survey in CAIT `mem_*` — `SURVEY.md` is project-scoped and may be git-tracked.
 - **Do** mark uncertain claims with `(unverified)` in the survey body.
